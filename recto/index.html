@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="nim-runtime/i18n.js"></script>
+<title>recto · PDF viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+<link rel="stylesheet" href="recto.css">
+</head>
+<body>
+<div id="app"></div>
+<pre id="nim-console" hidden style="position:fixed;bottom:0;left:0;right:0;max-height:30vh;overflow:auto;margin:0;padding:8px 12px;background:#101216;color:#c07a7a;font:12px/1.5 ui-monospace,Consolas,monospace;z-index:999"></pre>
+<script>window.__APP_WASM_URL__ = "app.wasm";</script>
+<script type="module" src="nim-runtime/boot.js"></script>
+</body>
+</html>
