@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Vault &amp; Admin · QNote Vault</title>
+<style>html,body{margin:0;font:14px/1.5 Inter,"Segoe UI",system-ui,sans-serif;background:#e7eaf0;color:#0f172a}main{max-width:760px;margin:30px auto;padding:24px;background:#fff;border:1px solid #dbe3ee;border-radius:12px}form{display:grid;gap:12px}label{display:grid;gap:5px;font-weight:600}input{padding:10px;border:1px solid #cbd5e1;border-radius:5px;font:inherit}button{padding:10px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;font:inherit;font-weight:600;cursor:pointer}small{color:#64748b}#message{min-height:20px;color:#b91c1c}h2{font-size:16px;margin:18px 0 4px}</style></head>
+<body><main><a href="/">← Back to workspace</a><h1>Vault &amp; Admin</h1><p id="message" role="alert"></p>
+<form><h2>Vault folder</h2><label>Folder path on the server<input name="vault" required placeholder="/srv/notes"></label><small>Choose an existing folder. Switching vault never moves or copies your documents.</small>
+<h2>Admin account</h2><label>Admin username<input name="username" autocomplete="username" maxlength="80" required></label>
+<label>New password (leave blank to keep it)<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024"></label>
+<label>Current password (required to apply settings)<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+<button>Apply settings &amp; sign out</button></form>
+<h2>Server</h2><p id="address"></p><small>Previous saves are kept as backups and deleted notes in a trash folder under the server's data directory.</small></main>
+<script src="admin.js"></script></body></html>

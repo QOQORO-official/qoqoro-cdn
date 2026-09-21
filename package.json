@@ -1,0 +1,18 @@
+{
+  "name": "qoqoro",
+  "version": "1.0.0",
+  "description": "QOQORO — the QNote word processor, whiteboard and PDF viewer as an embeddable static package",
+  "main": "qoqoro.js",
+  "browser": "qoqoro.js",
+  "files": [
+    "**/*"
+  ],
+  "license": "SEE LICENSE IN license-data.json",
+  "keywords": [
+    "qnote",
+    "editor",
+    "word-processor",
+    "wasm",
+    "nim"
+  ]
+}

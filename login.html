@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · QNote Vault</title>
+<style>
+  html, body { height: 100%; margin: 0; font: 14px/1.5 Inter, "Segoe UI", system-ui, sans-serif; background: #e7eaf0; color: #0f172a; }
+  main { max-width: 380px; margin: 12vh auto; padding: 28px; background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,.12); }
+  h1 { margin: 0 0 6px; font-size: 22px; }
+  p.lead { margin: 0 0 18px; color: #64748b; }
+  form { display: grid; gap: 12px; }
+  label { display: grid; gap: 5px; font-weight: 600; }
+  input[type=text], input[type=password] { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+  input:focus { outline: 2px solid #93c5fd; border-color: #2563eb; }
+  button { padding: 10px 14px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  #message { min-height: 20px; color: #b91c1c; }
+  .remember { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+</style>
+</head>
+<body>
+<main>
+  <h1>QNote Vault</h1>
+  <p class="lead">Sign in to open your notes.</p>
+  <form autocomplete="on" method="post" action="#" onsubmit="return false">
+    <label>Username <input id="username" name="username" type="text" autocomplete="username" required></label>
+    <label>Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Sign in</button>
+    <div id="message" aria-live="polite"></div>
+  </form>
+</main>
+<script src="vault-client.js"></script>
+<script src="login.js"></script>
+</body>
+</html>
