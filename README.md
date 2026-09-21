@@ -8,4 +8,5 @@
 
 `mode: 'workspace'` with `server: 'https://…'` for the whole app against a
 QNote Vault server. Serve every file in this folder together; paths inside
-are relative. `.wasm` files must be served as `application/wasm`.
+are relative. Serve `QNote.Resources.dll` as `application/octet-stream`
+with CORS enabled when embedding across origins. HTTPS (or localhost) is required.

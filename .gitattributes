@@ -1,9 +1,3 @@
-# Compiled package: byte-exact delivery. The editor page pins its inline
-# scripts by SHA-256 in its Content-Security-Policy, so no line-ending
-# conversion, ever.
 * -text
-*.wasm binary
-*.bin binary
+*.dll binary
 *.woff2 binary
-*.woff binary
-*.ttf binary

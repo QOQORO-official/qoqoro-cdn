@@ -7,7 +7,7 @@
   "files": [
     "**/*"
   ],
-  "license": "SEE LICENSE IN license-data.json",
+  "license": "SEE LICENSE IN LICENSE",
   "keywords": [
     "qnote",
     "editor",
