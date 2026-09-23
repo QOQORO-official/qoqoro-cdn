@@ -216,10 +216,18 @@ function createStylusHost(ctx) {
       const r = new FileReader(); r.onload = () => post('file', String(r.result || '')); r.readAsText(f);
     }),
     stylus_download: (np, nl, dp, dl, mp, ml) => {
-      const name = str(np, nl), data = str(dp, dl), mime = str(mp, ml);
+      const name = str(np, nl), mime = str(mp, ml);
       const a = document.createElement('a');
-      let url = data, revoke = false;
-      if (mime !== 'url') { url = URL.createObjectURL(new Blob([data], { type: mime })); revoke = true; }
+      let url = '', revoke = false;
+      if (mime === 'url') {
+        url = str(dp, dl);
+      } else {
+        // Straight from wasm memory into the Blob. Decoding it into a
+        // JavaScript string first would hold the note twice over — once as
+        // UTF-16, once re-encoded — which is what a big note cannot afford.
+        url = URL.createObjectURL(new Blob([new Uint8Array(ctx.memory.buffer, dp, dl).slice()], { type: mime }));
+        revoke = true;
+      }
       a.href = url; a.download = name; a.click();
       if (revoke) setTimeout(() => URL.revokeObjectURL(url), 1000);
     },

@@ -48,6 +48,9 @@ async function runWasmApp({ wasmBytes, outputEl, onLog, createBindwebRunner, cre
 
     // Wire memory into the WASI shim, then connect the bindweb runtime.
     wasi.setMemory(instance.exports.memory);
+    // The linear memory, so a page (or a benchmark) can see how much the
+    // document actually uses: globalThis.__stylusMemory.buffer.byteLength.
+    globalThis.__stylusMemory = instance.exports.memory;
     runner.connect(instance);
 
     // Clear the output container before running.
