@@ -58,7 +58,57 @@ html,body{overflow:hidden!important;overscroll-behavior:none}
     input.addEventListener('beforeinput',e=>{if(e.isComposing)return;if(e.inputType==='deleteContentBackward'||e.inputType==='deleteContentForward'){e.preventDefault();key(e.inputType==='deleteContentBackward'?'Backspace':'Delete');}else if(e.inputType==='insertLineBreak'||e.inputType==='insertParagraph'){e.preventDefault();key('Enter');}});
     input.addEventListener('input',e=>{if(e.isComposing)return;text(input.value);input.value='';});
     input.addEventListener('compositionend',()=>{text(input.value);input.value='';});
-    canvas.addEventListener('pointerup',e=>{if(small.matches&&e.pointerType==='touch')input.focus({preventScroll:true});});
+    // Touch navigation is separate from text input and table commands.
+    document.addEventListener('pointerdown',e=>{
+      if(e.target.closest?.('#btn-add-row,#btn-remove-row,#btn-add-col,#btn-remove-col,.qnote-table-menu'))input.blur();
+    },true);
+    const points=new Map();let gesture=null,lastTap=null,zoomFrame=0,pendingZoom=null;
+    const slider=byId('zoom-slider'),vertical=byId('qnote-scrollbar'),horizontal=byId('qnote-hscrollbar');
+    const zoom=()=>Number(slider.value)/100;
+    const midpoint=()=>{const [a,b]=[...points.values()];return {x:(a.x+b.x)/2,y:(a.y+b.y)/2,d:Math.hypot(a.x-b.x,a.y-b.y)};};
+    function setZoom(value,x,y){
+      pendingZoom={value,x,y};if(zoomFrame)return;
+      zoomFrame=requestAnimationFrame(()=>{
+        zoomFrame=0;const next=pendingZoom;pendingZoom=null;
+        const before=zoom(),after=Math.max(Number(slider.min)/100,Math.min(Number(slider.max)/100,next.value));
+        const rect=canvas.getBoundingClientRect(),fx=next.x-rect.left,fy=next.y-rect.top;
+        const sx=horizontal.scrollLeft,sy=vertical.scrollTop;
+        slider.value=String(Math.round(after*100));slider.dispatchEvent(new Event('input',{bubbles:true}));
+        requestAnimationFrame(()=>{horizontal.scrollLeft=(sx+fx)*after/before-fx;vertical.scrollTop=(sy+fy)*after/before-fy;});
+      });
+    }
+    canvas.addEventListener('pointerdown',e=>{
+      if(e.pointerType!=='touch')return;
+      e.preventDefault();e.stopImmediatePropagation();canvas.setPointerCapture(e.pointerId);
+      points.set(e.pointerId,{x:e.clientX,y:e.clientY});input.blur();
+      if(points.size===1)gesture={x:e.clientX,y:e.clientY,sx:horizontal.scrollLeft,sy:vertical.scrollTop,moved:false,pinch:false};
+      if(points.size===2){const m=midpoint();gesture={...gesture,pinch:true,moved:true,d:m.d,z:zoom()};}
+    },true);
+    canvas.addEventListener('pointermove',e=>{
+      if(!points.has(e.pointerId))return;e.preventDefault();e.stopImmediatePropagation();points.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(points.size>=2){const m=midpoint();setZoom(gesture.z*m.d/Math.max(1,gesture.d),m.x,m.y);return;}
+      if(gesture.pinch)return;
+      const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+      if(Math.hypot(dx,dy)>8)gesture.moved=true;
+      if(gesture.moved){horizontal.scrollLeft=gesture.sx-dx;vertical.scrollTop=gesture.sy-dy;}
+    },true);
+    function endTouch(e){
+      if(!points.has(e.pointerId))return;e.preventDefault();e.stopImmediatePropagation();points.delete(e.pointerId);
+      if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);
+      if(points.size)return;
+      const tap=e.type!=='pointercancel'&&!gesture.moved&&!gesture.pinch;gesture=null;
+      if(!tap){lastTap=null;return;}
+      const now=performance.now();
+      if(lastTap&&now-lastTap.time<280&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<30){setZoom(zoom()<1.5?2:1,e.clientX,e.clientY);lastTap=null;return;}
+      lastTap={time:now,x:e.clientX,y:e.clientY};
+      for(const type of ['mousemove','mousedown','mouseup'])canvas.dispatchEvent(new MouseEvent(type,{bubbles:true,clientX:e.clientX,clientY:e.clientY,button:0,buttons:type==='mousedown'?1:0}));
+      // Table edge/menu actions and object handles must not request a keyboard.
+      const cursor=canvas.dataset.cursor||getComputedStyle(canvas).cursor;
+      if(small.matches&&cursor==='text'&&!document.querySelector('.qnote-table-menu'))input.focus({preventScroll:true});
+    }
+    canvas.addEventListener('pointerup',endTouch,true);canvas.addEventListener('pointercancel',endTouch,true);
+    canvas.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
+
     function update(){root.classList.toggle('qm-expanded',small.matches&&expanded);more.setAttribute('aria-expanded',String(expanded));more.textContent=expanded?'Aa ▾':'Aa ▴';if(!small.matches)input.blur();window.dispatchEvent(new Event('resize'));}
     let fitTimer;
     const fit=()=>{clearTimeout(fitTimer);fitTimer=setTimeout(()=>{if(small.matches)click('btn-zoom-fit');},180);};
