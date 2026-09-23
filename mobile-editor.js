@@ -6,6 +6,7 @@
   const css=document.createElement('style');
   css.textContent=`
 .qm-bar{display:none}
+#qm-input{display:none!important;position:fixed!important;left:0!important;top:0!important;width:1px!important;height:1px!important;min-width:0!important;min-height:0!important;max-width:1px!important;max-height:1px!important;padding:0!important;border:0!important;opacity:0!important;pointer-events:none!important;resize:none!important;overflow:hidden!important}
 @media(max-width:600px){
 html,body{overflow:hidden!important;overscroll-behavior:none}
 #qnote-root{height:var(--qm-height,100dvh)!important;grid-template-rows:48px auto minmax(0,1fr) auto auto minmax(52px,auto)!important;position:relative}
@@ -27,7 +28,7 @@ html,body{overflow:hidden!important;overscroll-behavior:none}
 #qnote-root .tool,#qnote-root .tool-text,#qnote-root select{min-height:44px}
 #qnote-root #qnote-status{display:none}
 #qnote-root .toolbar-popup{position:fixed!important;inset:auto 8px 56px!important;max-width:calc(100vw - 16px);max-height:55dvh;overflow:auto}
-#qm-input{position:fixed;left:10px;top:50px;width:2px;height:2px;opacity:.01;font-size:16px;z-index:-1}
+#qm-input{display:block!important;font-size:16px;z-index:-1}
 .qnote-dialog{max-width:calc(100vw - 16px)!important;max-height:calc(100dvh - 16px)!important}
 }
 @media print{.qm-bar,#qm-input{display:none!important}}
