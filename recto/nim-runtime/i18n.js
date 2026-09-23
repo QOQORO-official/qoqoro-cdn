@@ -23,7 +23,7 @@
     'Previous':'前へ','Next':'次へ','Previous page':'前のページ','Next page':'次のページ','Find (Ctrl+F)':'検索 (Ctrl+F)','Browse document pages':'ページを参照',
     'Table of Contents':'目次','Contents':'目次','No results':'一致する結果がありません','No results found':'一致する結果がありません',
     'Undo':'元に戻す','Redo':'やり直す','Undo (Ctrl+Z)':'元に戻す (Ctrl+Z)','Redo (Ctrl+Y)':'やり直す (Ctrl+Y)',
-    'Copy':'コピー','Cut':'切り取り','Paste':'貼り付け','Select all':'すべて選択','Bold':'太字','Italic':'斜体','Underline':'下線','Strikethrough':'取り消し線',
+    'Copy':'コピー','Cut':'切り取り','Paste':'貼り付け','Select all':'すべて選択','Bold':'太字','Italic':'斜体','Underline':'下線','Strikethrough':'取り消し線','Bold (Ctrl+B)':'太字 (Ctrl+B)','Italic (Ctrl+I)':'斜体 (Ctrl+I)','Underline (Ctrl+U)':'下線 (Ctrl+U)','Strikethrough (Ctrl+Shift+5)':'取り消し線 (Ctrl+Shift+5)','Subscript (Ctrl+,)':'下付き文字 (Ctrl+,)','Superscript (Ctrl+.)':'上付き文字 (Ctrl+.)',
     'Font':'フォント','Font size':'フォントサイズ','Text color':'文字色','Highlight':'蛍光ペン','Align left':'左揃え','Align center':'中央揃え','Align right':'右揃え','Justify':'両端揃え',
     'Paragraph':'段落','Line spacing':'行間','Bullets':'箇条書き','Numbering':'段落番号','Indent':'インデント','Increase indent':'インデントを増やす','Decrease indent':'インデントを減らす',
     'Superscript':'上付き文字','Subscript':'下付き文字','Clear formatting':'書式をクリア','Normal':'標準','Heading 1':'見出し 1','Heading 2':'見出し 2','Heading 3':'見出し 3',

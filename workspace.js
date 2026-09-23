@@ -63,14 +63,14 @@ function connectLinks() {
 const requests = new Map(),
   openFolders = new Set();
 const say = value => status.textContent = value;
-function editor(value, value2 = {}) {
+function editor(value, value2 = {}, timeoutMs = 20000) {
   if (!ready) return Promise.reject(Error("The editor is still loading"));
   return new Promise((value3, value4) => {
     const value5 = ++requestId;
     const value6 = setTimeout(() => {
       requests.delete(value5);
       value4(Error("Editor did not respond"));
-    }, 2e4);
+    }, timeoutMs);
     requests.set(value5, {
       resolve: value3,
       reject: value4,
@@ -594,6 +594,8 @@ void run(async () => {
   if (!state.authenticated) { VaultClient.navigate('login.html', server); return; }
   document.querySelector('#logout').hidden = state.username === 'local' && !state.setup && !(await vault.supports('settings'));
   await refresh();
+  // Only a signed-in window serves the automation API.
+  void automationLoop();
 });
 let focusTimer;
 addEventListener("focus", () => {
@@ -725,6 +727,70 @@ async function moveVaultFile(source, destination) {
 window.addEventListener("message", event => {
   if (event.origin === location.origin && event.source === pdfFrame.contentWindow && event.data?.type === "VAULT_FILES_CHANGED") void run(refresh);
 });
+
+// ── Luau programs, from the host page and from the server ───────────────────
+// The engine lives in the editor frame, so every route into it passes through
+// here: QOQORO.runProgram() from the embedding page, and the server's
+// /api/program queue for callers that have no page at all (Flask, a cron job).
+async function runProgramHere(job) {
+  const source = String(job.source || "");
+  if (!source.trim()) throw Error("The program is empty");
+  if (job.path) await open(String(job.path), String(job.fileId || ""));
+  if (!current) throw Error("Open a vault note first");
+  // Booting the Luau VM on the first run takes longer than a poke.
+  const outcome = await editor("RUN_PROGRAM", {source, apply: job.apply !== false}, 120000);
+  const saved = job.save !== false && job.apply !== false;
+  if (saved) await save();
+  return {ok: true, applied: !!outcome.applied, commands: outcome.commands || 0,
+    output: outcome.output || [], status: outcome.status || "", result: outcome.result,
+    saved, path: current, fileId: currentId};
+}
+
+window.addEventListener("message", async event => {
+  if (event.source !== window.parent || event.data?.type !== "QOQORO_RUN_PROGRAM") return;
+  const {id} = event.data;
+  const reply = (result, error) =>
+    window.parent.postMessage({type: "QOQORO_PROGRAM_RESULT", id, result, error}, "*");
+  try {
+    reply(await runProgramHere(event.data));
+  } catch (error) {
+    reply(null, error.message || String(error));
+  }
+});
+
+// A server that implements /api/program hands out jobs posted by anything
+// that can reach it; a server that does not simply never answers, and this
+// backs off to one poll a minute.
+async function automationLoop() {
+  let quiet = 0;
+  for (;;) {
+    let job = null;
+    try {
+      job = await vault.get("/api/program/next");
+      quiet = 0;
+    } catch (error) {
+      // Signed out: stop, rather than bounce this page to the login form.
+      if (error?.status === 401 || error?.status === 403) return;
+      // A server without the program API answers 404 once and is left alone.
+      quiet = error?.status === 404 || error?.status === 501
+        ? 60000 : Math.min(30000, (quiet || 3000) * 2);
+    }
+    if (quiet) await new Promise(done => setTimeout(done, quiet));
+    if (!job || !job.id) continue;
+    let result;
+    try {
+      say("Running a program from the automation API…");
+      result = await runProgramHere(job);
+      say(result.status || "Program ran");
+    } catch (error) {
+      result = {ok: false, error: error.message || String(error)};
+      say("Automation: " + result.error);
+    }
+    try {
+      await vault.post("/api/program/result", {id: job.id, ...result});
+    } catch {}
+  }
+}
 
 window.addEventListener('message',event=>{
   if(event.origin!==location.origin||event.source!==pdfFrame.contentWindow||event.data?.type!=='updateUrl')return;

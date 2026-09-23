@@ -95,10 +95,10 @@
     let readyResolve, readyReject;
     const readyPromise = new Promise((ok, no) => { readyResolve = ok; readyReject = no; });
 
-    const ask = (type, extra = {}) => new Promise((ok, no) => {
+    const ask = (type, extra = {}, timeoutMs = 20000) => new Promise((ok, no) => {
       if (!ready) return no(new Error('QOQORO editor is still loading'));
       const id = ++requestId;
-      const timer = setTimeout(() => { pending.delete(id); no(new Error('QOQORO editor did not respond')); }, 20000);
+      const timer = setTimeout(() => { pending.delete(id); no(new Error('QOQORO editor did not respond')); }, timeoutMs);
       pending.set(id, {ok, no, timer});
       port.postMessage({type, id, ...extra});
     });
@@ -156,6 +156,14 @@
 
     const handle = {
       mode: 'editor', iframe, ready: readyPromise, load, save,
+      // Run a Luau program against this editor. qoqoro-luau.js wraps this in
+      // a friendlier API, but it works on its own:
+      //   await handle.runProgram('Selection:TypeText("hi")')
+      // The first run also boots the Luau VM in a worker, so this waits
+      // longer than an ordinary request.
+      runProgram: (source, opts = {}) =>
+        ask('RUN_PROGRAM', {source: String(source || ''), apply: opts.apply !== false},
+            opts.timeoutMs || 120000),
       destroy() { destroyed = true; port?.close(); iframe.remove(); },
     };
     return handle;
@@ -178,8 +186,30 @@
     };
     window.addEventListener('message', onMessage);
     const ready = showPage(iframe, 'index.html', inject()).then(() => handle);
+    let programId = 0;
+    const programs = new Map();
     const handle = {mode: 'workspace', iframe, ready, get server() { return server; },
+      // The workspace owns the editor frame, so a program is relayed through
+      // it: the page answers with QOQORO_PROGRAM_RESULT.
+      runProgram(source, opts = {}) {
+        return new Promise((ok, no) => {
+          const id = ++programId;
+          const timer = setTimeout(() => { programs.delete(id); no(new Error('QOQORO: the workspace did not answer')); }, 30000);
+          programs.set(id, {ok, no, timer});
+          iframe.contentWindow.postMessage({type: 'QOQORO_RUN_PROGRAM', id,
+            source: String(source || ''), apply: opts.apply !== false, save: opts.save !== false,
+            path: opts.path ? String(opts.path) : '', fileId: opts.fileId ? String(opts.fileId) : ''}, '*');
+        });
+      },
       destroy() { window.removeEventListener('message', onMessage); iframe.remove(); }};
+    window.addEventListener('message', (event) => {
+      if (event.source !== iframe.contentWindow || event.data?.type !== 'QOQORO_PROGRAM_RESULT') return;
+      const request = programs.get(event.data.id);
+      if (!request) return;
+      clearTimeout(request.timer); programs.delete(event.data.id);
+      if (event.data.error) request.no(new Error(event.data.error));
+      else request.ok(event.data.result || {});
+    });
     return handle;
   }
 
@@ -187,12 +217,18 @@
     version: '1.0.0',
     base: BASE,
     EMPTY_DOCUMENT: EMPTY,
+    /** Everything mount() has returned, newest last. */
+    mounted: [],
     mount(target, options = {}) {
       const el = resolveTarget(target);
       const mode = options.mode || 'editor';
-      if (mode === 'editor') return mountEditor(el, options);
-      if (mode === 'workspace') return mountWorkspace(el, options);
-      throw new Error('QOQORO.mount: mode must be "editor" or "workspace"');
+      if (mode !== 'editor' && mode !== 'workspace') throw new Error('QOQORO.mount: mode must be "editor" or "workspace"');
+      const handle = mode === 'editor' ? mountEditor(el, options) : mountWorkspace(el, options);
+      // The workspace exposes `server` as a getter of its own; only the
+      // editor handle needs to remember where it was pointed.
+      if (mode === 'editor') handle.server = options.server ? String(options.server).replace(/\/+$/, '') : '';
+      QOQORO.mounted.push(handle);
+      return handle;
     },
   };
   window.QOQORO = QOQORO;

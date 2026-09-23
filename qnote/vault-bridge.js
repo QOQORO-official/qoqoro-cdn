@@ -105,6 +105,14 @@
       try {
         if (msg.type === 'LOAD') { loadDoc(msg.doc); send({type: 'LOADED', id: msg.id}); }
         else if (msg.type === 'SAVE') captureDoc().then(doc => send({type: 'SAVED', id: msg.id, doc}), e => send({type: 'ERROR', id: msg.id, error: e.message}));
+        // The Luau engine lives in this page. The host page (and through it a
+        // Flask or Node server) asks for a run without opening the dialog.
+        else if (msg.type === 'RUN_PROGRAM') {
+          if (!globalThis.QNoteAutomation) throw Error('This editor build has no automation API');
+          globalThis.QNoteAutomation.run(String(msg.source || ''), {apply: msg.apply !== false})
+            .then(result => send({type: 'PROGRAM_RESULT', id: msg.id, ...result}),
+                  e => send({type: 'ERROR', id: msg.id, error: e.message, output: e.output || []}));
+        }
       } catch (e) { send({type: 'ERROR', id: msg.id, error: e.message}); }
     };
 

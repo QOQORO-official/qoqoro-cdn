@@ -58,4 +58,4 @@
     const show = () => { const p=document.createElement('p');p.setAttribute('role','alert');p.textContent='Unable to load protected resources: '+error.message;document.body.prepend(p); };
     if(document.body)show();else document.addEventListener('DOMContentLoaded',show,{once:true});
   });
-})({"key":"Uc/EyRzSQ2gFQpda8m5ZC66gU8WWxEc1jUVZs0eq3Ms=","paths":["qnote/app.wasm","qnote/auxiliary.wasm","qnote/layout.wasm","qnote/nim-runtime/decoder.wasm","qnote/nim-runtime/runtime.bin","recto/app.wasm","stylus/stylus.wasm"],"digest":"d856581ed91d22401883e0c0af96f2b4031595505cca7e48aae916cd2abf9e78"});
+})({"key":"h/Tbf6bXHbfTYWMj1h21EkmdM24QSXQ5Cp86SlLOOrQ=","paths":["qnote/app.wasm","qnote/auxiliary.wasm","qnote/layout.wasm","qnote/nim-runtime/decoder.wasm","qnote/nim-runtime/runtime.bin","qnote/vendor/luau/luau-web.js","recto/app.wasm","stylus/stylus.wasm"],"digest":"6fc5ed4a4182598a0f5ed7f7b45295b9f824aa8d71a3c703ee212fb0e6500d4b"});
