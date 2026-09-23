@@ -1,7 +1,7 @@
 # qoqoro 1.0.0
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/qoqoro@1.0.0/qoqoro.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/QOQORO-official/qoqoro-cdn@main/qoqoro.js"></script>
 <div id="notes" style="height:100vh"></div>
 <script>QOQORO.mount('#notes', { mode: 'editor' });</script>
 ```
