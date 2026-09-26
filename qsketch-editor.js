@@ -14,20 +14,48 @@
     calligraphy: {size:14,minSize:.85,stabilizer:.30,streamline:.20,smoothing:.10,opacity:1,nibAngle:45},
     marker: {size:18,minSize:.85,stabilizer:0,streamline:.12,smoothing:.10,opacity:.55,nibAngle:45}
   };
-  const settingDefaults = () => ({brush:'fountain',color:'#202530',brushes:structuredClone(brushDefaults),eraserSize:24,pressure:true,curve:0,fingers:'auto',penButtonErase:true,lowLatency:false});
-  const settingKey='qnote.qsketch.brush.v1';
+  const brushFields={size:[1,60],minSize:[.05,1],stabilizer:[0,1],streamline:[0,1],smoothing:[0,1],opacity:[.05,1],nibAngle:[0,180],curve:[-1,1]};
+  const brushNames={ballpoint:'Ballpoint',fountain:'Fountain pen',calligraphy:'Calligraphy',marker:'Marker'};
+  for(const value of Object.values(brushDefaults))Object.assign(value,{color:'#202530',pressure:true,curve:0});
+  const settingDefaults = () => ({brush:'fountain',brushes:structuredClone(brushDefaults),eraserSize:24,fingers:'auto',penButtonErase:true,lowLatency:false});
+  const settingKey='qnote.qsketch.brush.v2',oldSettingKey='qnote.qsketch.brush.v1';
+  function cleanBrush(input,base){
+    if(!input||typeof input!=='object'||Array.isArray(input))return {...base};
+    const result={...base};
+    for(const [key,[min,max]] of Object.entries(brushFields))if(typeof input[key]==='number'&&Number.isFinite(input[key]))result[key]=Math.max(min,Math.min(max,input[key]));
+    if(typeof input.color==='string'&&/^#[0-9a-fA-F]{6}$/.test(input.color))result.color=input.color;
+    if(typeof input.pressure==='boolean')result.pressure=input.pressure;
+    return result;
+  }
   function readSettings(){
     const value=settingDefaults();
-    try {const saved=JSON.parse(localStorage.getItem(settingKey)||'{}');
-      for(const key of ['brush','color','eraserSize','pressure','curve','fingers','penButtonErase','lowLatency'])if(saved[key]!==undefined)value[key]=saved[key];
-      for(const key of Object.keys(brushDefaults))Object.assign(value.brushes[key],saved.brushes?.[key]||{});
+    try {const stored=localStorage.getItem(settingKey),saved=JSON.parse(stored||localStorage.getItem(oldSettingKey)||'{}');
+      if(Object.hasOwn(brushDefaults,saved.brush))value.brush=saved.brush;
+      if(typeof saved.eraserSize==='number'&&Number.isFinite(saved.eraserSize))value.eraserSize=Math.max(2,Math.min(80,saved.eraserSize));
+      if(['auto','draw','navigate'].includes(saved.fingers))value.fingers=saved.fingers;
+      for(const key of ['penButtonErase','lowLatency'])if(typeof saved[key]==='boolean')value[key]=saved[key];
+      for(const key of Object.keys(brushDefaults)){
+        const previous=stored?{}:{color:saved.color,pressure:saved.pressure,curve:saved.curve};
+        value.brushes[key]=cleanBrush({...previous,...saved.brushes?.[key]},brushDefaults[key]);
+      }
     } catch(e){console.warn('QSketch settings unavailable',e);}
     return value;
   }
   let settings=readSettings();
   const persistSettings=()=>{try{localStorage.setItem(settingKey,JSON.stringify(settings));}catch{}};
   const brush=()=>settings.brushes[settings.brush]||settings.brushes.fountain;
-  const pressure=p=>Math.pow(Math.max(0,Math.min(1,p)),Math.pow(3,settings.curve));
+  const pressure=(p,b=brush())=>Math.pow(Math.max(0,Math.min(1,p)),Math.pow(3,b.curve));
+  function exportBrushPreset(id=settings.brush){
+    if(!Object.hasOwn(brushDefaults,id))throw Error('Choose a pen or brush first.');
+    return {format:'QOQORO Brush Preset',version:1,brush:id,settings:cleanBrush(settings.brushes[id],brushDefaults[id])};
+  }
+  function importBrushPreset(preset){
+    if(!preset||preset.format!=='QOQORO Brush Preset'||preset.version!==1||!Object.hasOwn(brushDefaults,preset.brush)||!preset.settings||typeof preset.settings!=='object'||Array.isArray(preset.settings))throw Error('This is not a supported QOQORO brush preset.');
+    const id=preset.brush;
+    settings.brushes[id]=cleanBrush(preset.settings,brushDefaults[id]);settings.brush=id;persistSettings();
+    if(bar)bar.querySelector('[data-brush]').value=id;
+    refreshBrushControls();return id;
+  }
   const nib=()=>{const a=brush().nibAngle*Math.PI/180;return [Math.cos(a),-Math.sin(a)];};
   const refresh = () => window.dispatchEvent(new Event('resize'));
   const decode = text => { try { return text.startsWith('QSK1:') ? JSON.parse(text.slice(5)) : {}; } catch { return {}; } };
@@ -114,7 +142,7 @@
     if(!bar)return;
     const tool=bar.querySelector('[data-brush]').value;
     bar.querySelector('[data-size]').value=tool==='erase'?settings.eraserSize:brush().size;
-    if(panel){panel.querySelector('[data-current-brush]').textContent=tool==='erase'?'Eraser':bar.querySelector('[data-brush]').selectedOptions[0].text;
+    if(panel){panel.querySelector('[data-current-brush]').textContent=brushNames[settings.brush]+(tool==='erase'?' (eraser active)':'');
       panel.querySelector('[data-nib-row]').style.display=settings.brush==='calligraphy'&&tool!=='erase'?'grid':'none';
       panel.querySelector('[data-row="size"]').style.display=tool==='erase'?'none':'grid';
       panel.querySelector('[data-row="eraserSize"]').style.display=tool==='erase'?'grid':'none';
@@ -123,7 +151,7 @@
         if(input.type==='checkbox')input.checked=!!value;else input.value=String(value);
         input.closest('label')?.querySelector('output')?.replaceChildren(document.createTextNode(settingLabel(key,value)));
       }
-      panel.querySelector('[data-color]').value=settings.color;
+      panel.querySelector('[data-color]').value=brush().color;
       panel.querySelector('[data-finger-note]').textContent=settings.fingers==='auto'?(penSeen?'Pen detected: palm movement is ignored; brief taps can undo. Choose Pan & zoom for deliberate navigation.':'Fingers draw until a pen is detected; then palm movement is ignored.'):settings.fingers==='draw'?'One finger draws when the pen is away; two fingers pan and zoom.':'Fingers pan and zoom when the pen is away.';
       drawPressureCurve();
     }
@@ -141,14 +169,14 @@
     c.clearRect(0,0,w,h);c.strokeStyle='#526074';c.lineWidth=1;
     for(let i=0;i<=4;i++){const x=i*w/4,y=i*h/4;c.beginPath();c.moveTo(x,0);c.lineTo(x,h);c.moveTo(0,y);c.lineTo(w,y);c.stroke();}
     c.beginPath();c.strokeStyle='#6b86ff';c.lineWidth=3;
-    for(let i=0;i<=64;i++){const p=i/64,v=brush().minSize+(1-brush().minSize)*(settings.pressure?pressure(p):1);if(i)c.lineTo(i*w/64,h-v*h);else c.moveTo(0,h-v*h);}c.stroke();
+    for(let i=0;i<=64;i++){const p=i/64,v=brush().minSize+(1-brush().minSize)*(brush().pressure?pressure(p):1);if(i)c.lineTo(i*w/64,h-v*h);else c.moveTo(0,h-v*h);}c.stroke();
   }
   function openSettings(){
     if(panel){closeSettings();return;}
     panel=document.createElement('aside');panel.id='qnote-qsketch-settings';panel.setAttribute('aria-label','Brush settings');
     panel.style.cssText='position:fixed;z-index:9001;right:12px;top:72px;width:min(350px,calc(100vw - 24px));max-height:calc(100dvh - 145px);overflow:auto;padding:16px;background:var(--q-theme-surface,#fff);color:var(--q-popup-ink,#172033);border:1px solid var(--q-popup-border,#ccd3df);border-radius:12px;box-shadow:0 12px 36px #0004;font:13px system-ui';
     panel.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><strong>Brush · <span data-current-brush></span></strong><button data-close aria-label="Close brush settings">×</button></div>
-      <label style="display:grid;gap:5px;margin:12px 0">Ink color<input type="color" data-color aria-label="Ink color"></label>
+      <label style="display:grid;gap:5px;margin:12px 0">Ink color for this brush<input type="color" data-color aria-label="Ink color for this brush"></label>
       <div data-sliders></div>
       <h3 style="font-size:12px;margin:18px 0 8px">PRESSURE</h3>
       <label style="display:flex;justify-content:space-between;gap:8px">Pressure sensitivity<input type="checkbox" data-setting="pressure"></label>
@@ -162,7 +190,13 @@
       <label style="display:flex;justify-content:space-between;gap:8px;margin:10px 0">Low latency ink<input type="checkbox" data-setting="lowLatency"></label>
       <small style="display:block;opacity:.7">Low latency applies when the drawing session is reopened. It may flicker on some phones.</small>
       <small style="display:block;margin:12px 0;opacity:.7">Two-finger tap or double-tap to undo · three-finger tap to redo in finger modes. Touch is ignored while the pen is in use.</small>
-      <button data-reset style="width:100%;margin-top:8px">Reset brushes & settings</button>`;
+      <h3 style="font-size:12px;margin:18px 0 8px">BRUSH PRESET</h3>
+      <div style="display:flex;gap:8px"><button data-save-preset type="button" style="flex:1">Download brush</button><button data-load-preset type="button" style="flex:1">Upload brush</button></div>
+      <input data-preset-file type="file" accept=".qbrush,application/json" hidden>
+      <small style="display:block;margin:8px 0;opacity:.7">A .qbrush file saves this brush's ink and pressure settings. Upload restores its brush type. Files stay on this device.</small>
+      <small data-preset-status role="status" aria-live="polite" style="display:block;min-height:18px"></small>
+      <button data-reset-brush style="width:100%;margin-top:8px">Reset this brush</button>
+      <button data-reset style="width:100%;margin-top:8px">Reset all brushes & device settings</button>`;
     const ranges=[['size','Size','Brush width',1,60,1],['eraserSize','Eraser size','Eraser radius in screen pixels',2,80,1],['stabilizer','Stabilizer','Ink trails the pen on a string',0,1,.01],['streamline','StreamLine','Pulls the line behind the nib',0,1,.01],['smoothing','Smoothing','Evens out the finished path',0,1,.01],['opacity','Opacity','Transparent ink',.05,1,.01],['nibAngle','Nib angle','Edge direction',0,180,1],['curve','Curve','Pressure response',-1,1,.01],['minSize','Min size','Size at the lightest touch',.05,1,.01]];
     const rows=panel.querySelector('[data-sliders]');let pressureAfter=panel.querySelector('[data-pressure-bar]');
     for(const [key,title,description,min,max,step] of ranges){const label=document.createElement('label');label.dataset.row=key;
@@ -174,8 +208,24 @@
     }
     for(const el of panel.querySelectorAll('button,select,input[type=color]'))el.style.cssText+=';'+controlStyle;
     panel.querySelector('[data-close]').onclick=closeSettings;
+    panel.querySelector('[data-reset-brush]').onclick=()=>{settings.brushes[settings.brush]={...brushDefaults[settings.brush]};persistSettings();refreshBrushControls();};
     panel.querySelector('[data-reset]').onclick=()=>{const selected=settings.brush;settings=settingDefaults();settings.brush=selected;persistSettings();refreshBrushControls();};
-    panel.querySelector('[data-color]').oninput=e=>{settings.color=e.target.value;persistSettings();};
+    panel.querySelector('[data-color]').oninput=e=>{brush().color=e.target.value;persistSettings();};
+    panel.querySelector('[data-save-preset]').onclick=()=>{
+      const preset=exportBrushPreset(),blob=new Blob([JSON.stringify(preset,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+      link.href=url;link.download='qoqoro-'+preset.brush+'.qbrush';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      panel.querySelector('[data-preset-status]').textContent='Downloaded '+brushNames[preset.brush]+' preset.';
+    };
+    const fileInput=panel.querySelector('[data-preset-file]');
+    panel.querySelector('[data-load-preset]').onclick=()=>fileInput.click();
+    fileInput.onchange=async()=>{
+      const file=fileInput.files?.[0];if(!file)return;
+      try{if(file.size>65536)throw Error('Brush preset is too large.');
+        const preset=JSON.parse(await file.text()),id=importBrushPreset(preset);
+        panel?.querySelector('[data-preset-status]')?.replaceChildren(document.createTextNode('Loaded '+brushNames[id]+' preset.'));
+      }catch(error){panel?.querySelector('[data-preset-status]')?.replaceChildren(document.createTextNode(error instanceof SyntaxError?'The brush preset is not valid JSON.':error.message));}
+      fileInput.value='';
+    };
     for(const input of panel.querySelectorAll('[data-setting]')){
       const change=()=>{const key=input.dataset.setting,value=input.type==='checkbox'?input.checked:input.type==='range'?Number(input.value):input.value;
         if(key in settings)settings[key]=value;else brush()[key]=value;
@@ -295,7 +345,7 @@
       const p=point(v);
       if(stroke.lasso){const L=stroke.lasso;L.last=p;if(L.op==='lasso'){const q=L.points.at(-1);if(Math.hypot((p.x-q[0])*geometry.get(active.id).zoom,(p.y-q[1])*geometry.get(active.id).zoom)>3)L.points.push([p.x,p.y]);}}
       else if(stroke.erase)active.E.qs_erase(p.x,p.y,settings.eraserSize/geometry.get(active.id).zoom);
-      else {stroke.distance=Math.max(stroke.distance||0,Math.hypot(p.x-stroke.start.x,p.y-stroke.start.y)*geometry.get(active.id).zoom);active.E.qs_add_point(p.x,p.y,v.pointerType==='pen'?pressure(v.pressure):1,v.timeStamp);
+      else {stroke.distance=Math.max(stroke.distance||0,Math.hypot(p.x-stroke.start.x,p.y-stroke.start.y)*geometry.get(active.id).zoom);active.E.qs_add_point(p.x,p.y,v.pointerType==='pen'&&stroke.brush.pressure?pressure(v.pressure,stroke.brush):1,v.timeStamp);
         if(v.pointerType==='pen'&&panel){panel.querySelector('[data-pressure-now]').textContent=Math.round(v.pressure*100)+'%';panel.querySelector('[data-pressure-bar]').value=v.pressure;}}
     }
     if(stroke.erase)rebuild(active);schedule();
@@ -360,10 +410,10 @@
         const p=point(e);e.preventDefault();
         try{overlay.setPointerCapture(e.pointerId);}catch{}
         if(bar.querySelector('[data-lasso]').getAttribute('aria-pressed')==='true'){startLasso(e);return;}
-        const tool=brushSelect.value,b=brush(),hex=settings.color;
-        stroke={pointer:e.pointerId,pointerType:e.pointerType,startTime:performance.now(),start:p,clientX:e.clientX,clientY:e.clientY,erase:tool==='erase'||(settings.penButtonErase&&e.pointerType==='pen'&&(e.button===5||(e.buttons&32)!==0)),color:rgba((parseInt(hex.slice(1),16)*256+Math.round(b.opacity*255))>>>0)};
+        const tool=brushSelect.value,b={...brush()},hex=b.color;
+        stroke={pointer:e.pointerId,pointerType:e.pointerType,startTime:performance.now(),start:p,clientX:e.clientX,clientY:e.clientY,brush:b,erase:tool==='erase'||(settings.penButtonErase&&e.pointerType==='pen'&&(e.button===5||(e.buttons&32)!==0)),color:rgba((parseInt(hex.slice(1),16)*256+Math.round(b.opacity*255))>>>0)};
         if(stroke.erase)active.E.qs_erase_begin();
-        else {const [nx,ny]=nib();active.E.qs_begin_stroke((parseInt(hex.slice(1),16)*256+Math.round(b.opacity*255))>>>0,b.size,settings.pressure?b.minSize:1,b.smoothing*3,b.streamline,tool==='calligraphy'?1:0,nx,ny,.15,b.stabilizer*80/geometry.get(active.id).zoom);}
+        else {const [nx,ny]=nib();active.E.qs_begin_stroke((parseInt(hex.slice(1),16)*256+Math.round(b.opacity*255))>>>0,b.size,b.pressure?b.minSize:1,b.smoothing*3,b.streamline,tool==='calligraphy'?1:0,nx,ny,.15,b.stabilizer*80/geometry.get(active.id).zoom);}
         feed(e);
       };
       overlay.onpointermove=e=>{if(e.pointerType==='pen')markPen();if(touch(e))return;if(stroke?.pointer===e.pointerId){e.preventDefault();feed(e);}};
