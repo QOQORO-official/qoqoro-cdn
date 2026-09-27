@@ -21,7 +21,7 @@
   const STORAGE_KEY = 'qoqoro-server';
   let port, pendingSave = null, exporting = false, vaultDownloads = 0, server = null, features = {};
   const send = value => port?.postMessage(value);
-  const status = text => { const el = document.getElementById('qnote-status-text'); if (el) el.textContent = text; };
+  const status = text => { const el = document.getElementById('qnote-status-text'); if (el) el.textContent = text; window.dispatchEvent(new Event('qoqoro-document-state')); };
 
   // ── theme preferences follow the user when the server stores them ──
   if (typeof Storage !== 'undefined') {
@@ -89,7 +89,22 @@
     };
 
     // ── Save / Ctrl+S: the connected server first, else the parent ──
-    const requestSave = () => { if (connected()) void saveToServer(); else send({type: 'REQUEST_SAVE'}); };
+    const downloadCopy = () => send({type:'REQUEST_DOWNLOAD',filename:standalone.path.split(/[\\/]/).pop()||undefined});
+    const requestSave = () => {
+      if(!connected()&&!features.vaultSave){downloadCopy();return;}
+      if(document.getElementById('qoqoro-save-dialog'))return;
+      const dialog=document.createElement('dialog');dialog.id='qoqoro-save-dialog';
+      dialog.setAttribute('aria-label','Save document');
+      dialog.style.cssText='box-sizing:border-box;width:min(320px,calc(100vw - 24px));padding:16px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font:14px system-ui;box-shadow:0 16px 48px #0003';
+      const heading=document.createElement('h2');heading.textContent='Save document';heading.style.cssText='font-size:16px;margin:0 0 12px';dialog.append(heading);
+      for(const [label,action] of [['Save to server',()=>connected()?void saveToServer():send({type:'REQUEST_SAVE'})],['Download copy',downloadCopy],['Cancel',()=>{}]]){
+        const button=document.createElement('button');button.type='button';button.textContent=label;
+        button.style.cssText='display:block;width:100%;min-height:44px;margin-top:6px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:7px;background:#f8fafc;color:#0f172a;font:inherit;text-align:left;cursor:pointer';
+        button.onclick=()=>{dialog.close();action();};dialog.append(button);
+      }
+      dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
+      dialog.onclose=()=>dialog.remove();document.body.append(dialog);dialog.showModal();
+    };
     document.addEventListener('click', event => {
       if (exporting && event.target.closest?.('a[download="document.qnote"]')) event.preventDefault();
       if (event.target.closest?.('#btn-save') && !exporting) { event.preventDefault(); event.stopImmediatePropagation(); requestSave(); }
@@ -104,6 +119,7 @@
       const msg = event.data || {};
       try {
         if (msg.type === 'LOAD') { loadDoc(msg.doc); send({type: 'LOADED', id: msg.id}); }
+        else if (msg.type === 'SAVE_OPTIONS') { requestSave(); send({type:'SAVE_OPTIONS_SHOWN',id:msg.id}); }
         else if (msg.type === 'SAVE') captureDoc().then(doc => send({type: 'SAVED', id: msg.id, doc}), e => send({type: 'ERROR', id: msg.id, error: e.message}));
         // The Luau engine lives in this page. The host page (and through it a
         // Flask or Node server) asks for a run without opening the dialog.
@@ -248,6 +264,7 @@
     }
     // Programmatic access for the host page (qoqoro.js) and tests.
     globalThis.__qoqoroBridge = {captureDoc, loadDoc, serverDialog, standalone, get connected() { return connected(); }};
+    window.dispatchEvent(new Event('qoqoro-document-state'));
     send({type: 'READY'});
     return true;
   }

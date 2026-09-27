@@ -162,6 +162,15 @@ frame.addEventListener("load", () => {
       void run(save);
       return;
     }
+    if (message.type === 'REQUEST_DOWNLOAD') {
+      void run(async()=>{
+        const value=await editor('SAVE');
+        const url=URL.createObjectURL(new Blob([value.doc],{type:'application/vnd.qnote+xml'}));
+        const link=document.createElement('a');link.href=url;link.download=current.split(/[\\/]/).pop()||'document.qnote';link.click();
+        setTimeout(()=>URL.revokeObjectURL(url),1000);say('Downloaded a copy');
+      });
+      return;
+    }
     if (message.type === "REQUEST_DOCX") {
       showDocx();
       return;
@@ -175,7 +184,7 @@ frame.addEventListener("load", () => {
   frame.contentWindow.postMessage({
     type: "VAULT_CONNECT",
     server: server || location.origin,
-    features: {docx: true}
+    features: {docx: true, vaultSave: true}
   }, "*", [channel.port2]);
 });
 async function refresh() {
@@ -413,7 +422,7 @@ document.querySelector("#newFolderHeaderBtn").onclick = () => run(async () => {
 });
 document.querySelector("#saveVault").onclick = () => run(async()=>{
   if(activePane==='pdf'){await pdfFrame.contentWindow?.__rectoHost?.flush();say('PDF annotations saved');}
-  else await save();
+  else await editor('SAVE_OPTIONS');
 });
 document.querySelector("#refreshVault").onclick = () => run(refresh);
 // Where the API lives: an IP address with port, or a domain. Remembered for

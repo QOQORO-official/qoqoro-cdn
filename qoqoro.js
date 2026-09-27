@@ -112,10 +112,10 @@
       await ask('LOAD', {doc: xml});
     };
     const save = async () => (await ask('SAVE')).doc;
-    const download = (xml) => {
+    const download = (xml, filename) => {
       const url = URL.createObjectURL(new Blob([xml], {type: 'application/vnd.qnote+xml'}));
       const a = document.createElement('a');
-      a.href = url; a.download = options.filename || 'document.qnote'; a.click();
+      a.href = url; a.download = filename || options.filename || 'document.qnote'; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 
@@ -132,10 +132,11 @@
           catch (e) { readyReject(e); }
           return;
         }
-        if (msg.type === 'REQUEST_SAVE') {
+        if (msg.type === 'REQUEST_SAVE' || msg.type === 'REQUEST_DOWNLOAD') {
           try {
             const xml = await save();
-            if (typeof options.onSave === 'function') await options.onSave(xml, handle); else download(xml);
+            if (msg.type === 'REQUEST_DOWNLOAD') download(xml,msg.filename);
+            else if (typeof options.onSave === 'function') await options.onSave(xml, handle); else download(xml);
           } catch (e) { console.error('[QOQORO] save failed:', e); }
           return;
         }
