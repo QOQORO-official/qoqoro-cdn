@@ -41,3 +41,38 @@ button, input, select { font: inherit; }
 #context button { display: block; width: 190px; padding: 8px 10px; border: 0; text-align: left; background: #fff; border-radius: 4px; cursor: pointer; }
 #context button:hover, #context button:focus { background: #eff6ff; outline: none; }
 [hidden] { display: none !important; }
+
+/* The shell owns navigation; the editor owns its bottom formatting bar. */
+body { display: flex; flex-direction: column; height: 100dvh; }
+.vault-header { flex-shrink: 0; }
+.app-shell { flex: 1; min-height: 0; height: auto; }
+.menu-toggle, #closeFiles { display: none; }
+.header-more { position: relative; }
+.more-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 120; width: 210px; padding: 6px; background: white; border: 1px solid #dbe2ec; border-radius: 12px; box-shadow: 0 12px 40px #0f172a26; }
+.more-menu button, .more-menu a { display: block; width: 100%; min-height: 44px; text-align: left; border: 0; background: white; }
+button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+#workspaceNotice { position: fixed; z-index: 150; top: calc(54px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 10px 16px; border-radius: 10px; background: #17243a; color: white; box-shadow: 0 4px 16px #0002; pointer-events: none; overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .vault-header { height: calc(52px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); gap: 8px; }
+  .vault-header button { min-height: 44px; }
+  .menu-toggle { display: block; min-width: 44px; }
+  .vault-header .brand { display: none; }
+  #currentNote { font-weight: 600; color: #17243a; }
+  .more-toggle { min-width: 44px; font-size: 24px; }
+  .pane-divider { display: none; }
+  .sidebar { position: fixed; z-index: 110; inset: 0 auto 0 0; width: min(340px, calc(100vw - 48px)) !important; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left); transform: translateX(-100%); visibility: hidden; transition: transform .18s ease, visibility .18s; box-shadow: 12px 0 40px #0f172a22; }
+  .files-open .sidebar { transform: translateX(0); visibility: visible; }
+  .sidebar-backdrop { position: fixed; inset: 0; background: #0f172a55; z-index: 105; touch-action: none; }
+  #closeFiles { display: block; align-self: flex-end; min-height: 44px; padding: 0 14px; border: 0; background: transparent; color: #2563eb; }
+  .sidebar-title-row { padding-top: 0; }
+  .sidebar-actions { width: 100%; }
+  .sidebar-actions button { flex: 1; min-height: 44px; }
+  .search-box { font-size: 16px; min-height: 44px; }
+  .file-item, .folder-row, .vault-root, .iframe-nav-select, .iframe-nav-arrow { min-height: 44px; }
+  .file-item { color: #0f172a; }
+  .file-list { overscroll-behavior: contain; }
+  #context { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; }
+  #context button { min-height: 44px; }
+  .main-panel { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }

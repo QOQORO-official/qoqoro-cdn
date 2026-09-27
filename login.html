@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign in · QNote Vault</title>
 <style>
+  * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; font: 14px/1.5 Inter, "Segoe UI", system-ui, sans-serif; background: #e7eaf0; color: #0f172a; }
   main { max-width: 380px; margin: 12vh auto; padding: 28px; background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,.12); }
   h1 { margin: 0 0 6px; font-size: 22px; }
@@ -17,6 +18,11 @@
   button:disabled { opacity: .6; cursor: default; }
   #message { min-height: 20px; color: #b91c1c; }
   .remember { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+  @media (max-width: 600px) {
+    main { margin: 24px 12px; max-width: none; padding: 24px; }
+    input[type=text], input[type=password] { min-width: 0; width: 100%; font-size: 16px; min-height: 44px; }
+    button { min-height: 44px; }
+  }
 </style>
 </head>
 <body>

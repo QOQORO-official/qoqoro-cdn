@@ -12,6 +12,8 @@ html,body{overflow:hidden!important;overscroll-behavior:none}
 #qnote-root{height:var(--qm-height,100dvh)!important;grid-template-rows:48px auto minmax(0,1fr) auto auto minmax(52px,auto)!important;position:relative}
 .qm-bar{display:flex;align-items:center;gap:4px;background:var(--q-theme-surface,#fff);color:var(--q-popup-ink,#172033);padding:2px 8px;min-width:0}
 #qm-top{grid-row:1;border-bottom:1px solid #cbd5e1}
+#qnote-root.qm-vault-hosted{grid-template-rows:0 auto minmax(0,1fr) auto auto minmax(52px,auto)!important}
+#qnote-root.qm-vault-hosted #qm-top{display:none}
 #qm-top strong{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
 .qm-bar button{flex:none;min-width:44px;min-height:44px;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;touch-action:manipulation}
 .qm-bar button[aria-pressed=true]{background:var(--q-theme-accent,#9b1b30);color:white}
@@ -52,6 +54,16 @@ html,body{overflow:hidden!important;overscroll-behavior:none}
     button(quick,'List formatting','≡',()=>{expanded=true;click('tab-main-btn');update();byId('list-select')?.focus();});
     button(quick,'Fit page width','Fit',()=>click('btn-zoom-fit'));
     button(quick,'Show keyboard','⌨',()=>input.focus({preventScroll:true}));
+    // The vault already provides the document title and Save. Keep one header
+    // and move editing actions into the thumb-reachable formatting strip.
+    try {
+      if (window.frameElement?.id === 'editorFrame') {
+        root.classList.add('qm-vault-hosted');
+        const undo=top.querySelector('[aria-label="Undo"]'),redo=top.querySelector('[aria-label="Redo"]');
+        more.after(undo,redo);
+        quick.append(top.querySelector('[aria-label="Done editing"]'));
+      }
+    } catch { /* Cross-origin standalone embeds retain their own header. */ }
     function key(name){for(const type of ['keydown','keyup'])canvas.dispatchEvent(new KeyboardEvent(type,{key:name,bubbles:true}));}
     function text(value){if(!value)return;const action=byId('qnote-misc-action');action.value=JSON.stringify({op:'clipboard-text-paste',text:value});action.dispatchEvent(new Event('change',{bubbles:true}));}
     input.addEventListener('keydown',e=>e.stopPropagation());

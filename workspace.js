@@ -9,6 +9,69 @@ const frame = document.querySelector("#editorFrame");
 const list = document.querySelector("#fileList");
 const search = document.querySelector("#fileSearch");
 const status = document.querySelector("#sendStatus");
+const compactLayout = matchMedia('(max-width: 900px)');
+const sidebar = document.querySelector('#sidebar');
+const menuToggle = document.querySelector('#menuToggle');
+const moreToggle = document.querySelector('#moreToggle');
+const moreMenu = document.querySelector('#moreMenu');
+function setMore(open, restore = false) {
+  moreMenu.hidden = !open;
+  moreToggle.setAttribute('aria-expanded', String(open));
+  if (open) moreMenu.querySelector('button:not([hidden])')?.focus();
+  else if (restore) moreToggle.focus();
+}
+function setFiles(open, restore = false) {
+  open = open && compactLayout.matches;
+  document.body.classList.toggle('files-open', open);
+  document.querySelector('#sidebarBackdrop').hidden = !open;
+  menuToggle.setAttribute('aria-expanded', String(open));
+  sidebar.inert = compactLayout.matches && !open;
+  document.querySelector('.main-panel').inert = open;
+  document.querySelector('.vault-header').inert = open;
+  if (open) { setMore(false); document.querySelector('#workspaceNotice').hidden = true; document.querySelector('#closeFiles').focus(); }
+  else if (restore) menuToggle.focus();
+}
+menuToggle.onclick = () => setFiles(true);
+document.querySelector('#closeFiles').onclick = () => setFiles(false, true);
+document.querySelector('#sidebarBackdrop').onclick = () => setFiles(false, true);
+moreToggle.onclick = () => setMore(moreMenu.hidden);
+moreMenu.addEventListener('click', event => { if (event.target.closest('button,a')) setMore(false); });
+document.addEventListener('pointerdown', event => { if (!event.target.closest('#headerMore')) setMore(false); });
+window.addEventListener('blur', () => setMore(false));
+document.addEventListener('keydown', event => {
+  const drawer = document.body.classList.contains('files-open');
+  if (event.key === 'Escape') { if (drawer) setFiles(false, true); else if (!moreMenu.hidden) setMore(false, true); }
+  const scope = drawer ? sidebar : !moreMenu.hidden ? moreMenu : null;
+  if (scope && event.key === 'Tab') {
+    const items = [...scope.querySelectorAll('button,input,a,select,summary')].filter(el => !el.disabled && el.getClientRects().length);
+    const first = items[0], last = items.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
+});
+compactLayout.addEventListener('change', () => setFiles(false));
+setFiles(false);
+// In an iframe the editor cannot see the top-level software keyboard bounds.
+// Resize its containing pane when the keyboard reduces the visual viewport,
+// but leave browser pinch-zoom alone.
+function fitWorkspaceViewport() {
+  const viewport = window.visualViewport;
+  document.body.style.height = compactLayout.matches && viewport && viewport.scale === 1
+    ? viewport.height + 'px' : '100dvh';
+}
+window.visualViewport?.addEventListener('resize', fitWorkspaceViewport);
+window.addEventListener('resize', fitWorkspaceViewport);
+fitWorkspaceViewport();
+// Report saves/errors even when the file drawer is closed.
+let noticeTimer;
+new MutationObserver(() => {
+  if (!compactLayout.matches || document.body.classList.contains('files-open')) return;
+  const notice = document.querySelector('#workspaceNotice');
+  notice.textContent = status.textContent;
+  notice.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { notice.hidden = true; }, 3500);
+}).observe(status, {childList: true, characterData: true, subtree: true});
 let files = [],
   folders = [],
   current = "",
@@ -271,6 +334,7 @@ async function openPdf(path, id, page = 1, annotId = "") {
   pdfId = identity.fileId;
   switchPane('pdf');
   say('Opened ' + identity.path);
+  setFiles(false);
 }
 async function open(path, value = "") {
   if (/\.pdf$/i.test(path)) {
@@ -279,6 +343,7 @@ async function open(path, value = "") {
   }
   if (path === current && (!value || value === currentId)) {
     switchPane("editor");
+    setFiles(false);
     return;
   }
   if (current && !confirm("Save the current note before opening another? Cancel keeps this note open.")) return;
@@ -299,6 +364,7 @@ async function open(path, value = "") {
   document.querySelector("#currentNote").textContent = path;
   render();
   say("Opened " + path);
+  setFiles(false);
 }
 async function save() {
   await pdfFrame.contentWindow?.__rectoHost?.flush();
