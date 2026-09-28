@@ -151,6 +151,16 @@ class VaultClient {
 
   // ── §4 notes ───────────────────────────────────────────────────────────
   note(path, fileId) { return this.get('/api/notes/' + VaultClient.encodePath(path), {fileId}); }
+  async chart(path, fileId) {
+    const identity=fileId?await this.resolveId(fileId):await this.fileId(path);
+    const data=await this.get('/api/qochart/'+VaultClient.encodePath(identity.path));
+    return {doc:data.raw ?? data.doc ?? data,noteId:identity.path,fileId:identity.fileId};
+  }
+  async saveChart(path, xml, fileId) {
+    const identity=fileId?await this.resolveId(fileId):await this.fileId(path);
+    await this.request('POST','/api/qochart/'+VaultClient.encodePath(identity.path),{body:xml,type:'application/vnd.qochart+xml'});
+    return {noteId:identity.path,fileId:identity.fileId};
+  }
   saveNote(path, xml, fileId) {
     return this.request('POST', '/api/notes/' + VaultClient.encodePath(path), {body: xml, type: 'application/vnd.qnote+xml', query: {fileId}});
   }
@@ -177,8 +187,10 @@ class VaultClient {
     try { return await this.post('/api/fs/duplicate', {path: from, to}); }
     catch (e) {
       if (!(e instanceof VaultError) || e.status !== 404) throw e;
-      const source = await this.note(from);
+      const isChart = /\.qochart$/i.test(from);
+      const source = isChart ? await this.chart(from) : await this.note(from);
       await this.create(to);
+      if (isChart) return this.saveChart(to, source.doc);
       return this.saveNote(to, typeof source.doc === 'string' ? source.doc : JSON.stringify(source.doc));
     }
   }

@@ -11,6 +11,8 @@ const search = document.querySelector("#fileSearch");
 const status = document.querySelector("#sendStatus");
 const compactLayout = matchMedia('(max-width: 900px)');
 const sidebar = document.querySelector('#sidebar');
+const edgeToggle = document.querySelector('#filesEdgeToggle');
+let drawerTrigger = null;
 const menuToggle = document.querySelector('#menuToggle');
 const moreToggle = document.querySelector('#moreToggle');
 const moreMenu = document.querySelector('#moreMenu');
@@ -25,13 +27,18 @@ function setFiles(open, restore = false) {
   document.body.classList.toggle('files-open', open);
   document.querySelector('#sidebarBackdrop').hidden = !open;
   menuToggle.setAttribute('aria-expanded', String(open));
+  edgeToggle.setAttribute('aria-expanded', String(open));
+  edgeToggle.setAttribute('aria-label', open ? 'Hide file list' : 'Show file list');
+  edgeToggle.title = open ? 'Hide files' : 'Show files';
+  document.querySelector('#context').hidden = true;
   sidebar.inert = compactLayout.matches && !open;
   document.querySelector('.main-panel').inert = open;
   document.querySelector('.vault-header').inert = open;
   if (open) { setMore(false); document.querySelector('#workspaceNotice').hidden = true; document.querySelector('#closeFiles').focus(); }
-  else if (restore) menuToggle.focus();
+  else if (restore) (drawerTrigger || menuToggle).focus();
 }
-menuToggle.onclick = () => setFiles(true);
+menuToggle.onclick = () => { drawerTrigger = menuToggle; setFiles(!document.body.classList.contains('files-open')); };
+edgeToggle.onclick = () => { drawerTrigger = edgeToggle; setFiles(!document.body.classList.contains('files-open'), true); };
 document.querySelector('#closeFiles').onclick = () => setFiles(false, true);
 document.querySelector('#sidebarBackdrop').onclick = () => setFiles(false, true);
 moreToggle.onclick = () => setMore(moreMenu.hidden);
@@ -40,10 +47,16 @@ document.addEventListener('pointerdown', event => { if (!event.target.closest('#
 window.addEventListener('blur', () => setMore(false));
 document.addEventListener('keydown', event => {
   const drawer = document.body.classList.contains('files-open');
+  const fileMenu = document.querySelector('#context');
+  if (event.key === 'Escape' && !fileMenu.hidden) {
+    fileMenu.hidden = true;
+    const trigger = fileMenuTrigger?.isConnected ? fileMenuTrigger : [...list.querySelectorAll('.file-actions')].find(button => button.dataset.filePath === fileMenuTrigger?.dataset.filePath);
+    trigger?.focus(); event.preventDefault(); return;
+  }
   if (event.key === 'Escape') { if (drawer) setFiles(false, true); else if (!moreMenu.hidden) setMore(false, true); }
-  const scope = drawer ? sidebar : !moreMenu.hidden ? moreMenu : null;
+  const scope = !fileMenu.hidden ? fileMenu : drawer ? sidebar : !moreMenu.hidden ? moreMenu : null;
   if (scope && event.key === 'Tab') {
-    const items = [...scope.querySelectorAll('button,input,a,select,summary')].filter(el => !el.disabled && el.getClientRects().length);
+    const items = [...scope.querySelectorAll('button,input,a,select,summary'), ...(scope === sidebar ? [edgeToggle] : [])].filter(el => !el.disabled && el.getClientRects().length);
     const first = items[0], last = items.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -62,6 +75,57 @@ function fitWorkspaceViewport() {
 window.visualViewport?.addEventListener('resize', fitWorkspaceViewport);
 window.addEventListener('resize', fitWorkspaceViewport);
 fitWorkspaceViewport();
+
+// The files handle floats over whichever app is open. An app reports the
+// parts of its frame its own chrome covers (QNote's ribbon sheet, its
+// formatting bar, the space the keyboard takes), and the handle keeps to the
+// free band between them, as close to its usual 44% height as that band allows.
+const frameInsets = new WeakMap(); // iframe element -> {top, bottom} in CSS px
+function edgeToggleFrame() {
+  // The app frame under the handle's column: the visible iframe at x = 22px.
+  let best = null, bestArea = 0;
+  for (const el of document.querySelectorAll('iframe')) {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || r.left > 22 || r.right < 22) continue;
+    if (getComputedStyle(el).visibility === 'hidden') continue;
+    if (r.width * r.height > bestArea) { best = el; bestArea = r.width * r.height; }
+  }
+  return best;
+}
+function placeEdgeToggle() {
+  if (getComputedStyle(edgeToggle).display === 'none') { edgeToggle.style.top = ''; return; }
+  const viewport = window.visualViewport;
+  const viewTop = viewport ? viewport.offsetTop : 0;
+  const viewBottom = viewTop + (viewport ? viewport.height : innerHeight);
+  const frameEl = edgeToggleFrame();
+  const r = frameEl ? frameEl.getBoundingClientRect() : {top: 0, bottom: innerHeight};
+  const inset = (frameEl && frameInsets.get(frameEl)) || {top: 0, bottom: 0};
+  const gap = 8, h = edgeToggle.offsetHeight || 56;
+  const top = Math.max(r.top + inset.top, viewTop) + gap;
+  const bottom = Math.min(r.bottom - inset.bottom, viewBottom) - gap;
+  // Usual spot, 44% down the free band; if the band is shorter than the
+  // handle, hug its top edge rather than slide under the app's chrome.
+  const y = bottom - top >= h ? Math.max(top, Math.min(bottom - h, top + (bottom - top) * 0.44 - h / 2)) : top;
+  edgeToggle.style.top = Math.round(y) + 'px';
+}
+let placeFrame = 0;
+const placeEdgeToggleSoon = () => { if (!placeFrame) placeFrame = requestAnimationFrame(() => { placeFrame = 0; placeEdgeToggle(); }); };
+window.addEventListener('message', event => {
+  if (event.origin !== location.origin || event.data?.type !== 'QOQORO_FRAME_INSETS') return;
+  const el = [...document.querySelectorAll('iframe')].find(f => f.contentWindow === event.source);
+  if (!el) return;
+  const clean = v => Math.max(0, Math.min(10000, Number(v) || 0));
+  frameInsets.set(el, {top: clean(event.data.top), bottom: clean(event.data.bottom)});
+  placeEdgeToggleSoon();
+});
+window.visualViewport?.addEventListener('resize', placeEdgeToggleSoon);
+window.visualViewport?.addEventListener('scroll', placeEdgeToggleSoon);
+window.addEventListener('resize', placeEdgeToggleSoon);
+compactLayout.addEventListener('change', placeEdgeToggleSoon);
+// App switches show and hide frames without a resize.
+new MutationObserver(placeEdgeToggleSoon).observe(document.querySelector('.main-panel') || document.body,
+  {subtree: true, attributes: true, attributeFilter: ['hidden', 'class', 'style']});
+placeEdgeToggle();
 // Report saves/errors even when the file drawer is closed.
 let noticeTimer;
 new MutationObserver(() => {
@@ -79,6 +143,17 @@ let files = [],
   ready = false,
   busy = false;
 let currentId = "";
+let noteBaseline = null, noteBaselineReady = Promise.resolve();
+async function noteReplaceCheck() {
+  if (!ready) return true;
+  await noteBaselineReady;
+  const value = await editor('SAVE');
+  if (value.doc === noteBaseline) return true;
+  return new Promise(resolve => chart.dialog('Unsaved note', [
+    ['Save and continue', async () => { await save(); resolve(true); }],
+    ['Discard changes', () => resolve(true)], ['Cancel', () => resolve(false)]
+  ], () => resolve(false)));
+}
 let port,
   linkPort,
   requestId = 0;
@@ -125,8 +200,47 @@ function connectLinks() {
 }
 const requests = new Map(),
   openFolders = new Set();
+const folderStateKey = 'qoqoro-folders:' + (server || location.origin);
+try {
+  const saved = JSON.parse(localStorage.getItem(folderStateKey) || '[]');
+  if (Array.isArray(saved)) for (const path of saved) if (typeof path === 'string') openFolders.add(path);
+} catch {}
+function rememberFolders() {
+  try { localStorage.setItem(folderStateKey, JSON.stringify([...openFolders])); } catch {}
+}
+async function copyRelativePath(path) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(path);
+      say('Path copied');
+      return;
+    }
+  } catch {}
+  const previous = document.activeElement;
+  const input = document.createElement('textarea');
+  input.value = path;
+  input.setAttribute('aria-label', 'Relative path');
+  input.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0';
+  document.body.append(input);
+  let copied = false;
+  try { input.focus(); input.select(); copied = document.execCommand('copy'); } catch {}
+  finally { input.remove(); previous?.focus({preventScroll:true}); }
+  if (copied) say('Path copied');
+  else {
+    prompt('Automatic copying is unavailable. Copy this relative path:', path);
+    say('Relative path shown for manual copying');
+  }
+}
 const say = value => status.textContent = value;
+let editorQueue=Promise.resolve();
 function editor(value, value2 = {}, timeoutMs = 20000) {
+  // The canvas exporter is single-flight. Queue LOAD/RUN/SAVE requests so
+  // automation, normal saving and host callers cannot overlap captures.
+  const pending=editorQueue.then(()=>editorRequest(value,value2,timeoutMs));
+  editorQueue=pending.catch(()=>{});
+  return pending;
+}
+function editorRequest(value, value2 = {}, timeoutMs = 20000) {
   if (!ready) return Promise.reject(Error("The editor is still loading"));
   return new Promise((value3, value4) => {
     const value5 = ++requestId;
@@ -154,6 +268,7 @@ frame.addEventListener("load", () => {
     const message = event.data;
     if (message.type === "READY") {
       ready = true;
+      noteBaselineReady = editor('SAVE').then(value => { noteBaseline = value.doc; }).catch(() => {});
       connectLinks();
       say("Choose a note, or create a new one");
       return;
@@ -184,23 +299,26 @@ frame.addEventListener("load", () => {
   frame.contentWindow.postMessage({
     type: "VAULT_CONNECT",
     server: server || location.origin,
-    features: {docx: true, vaultSave: true}
+    features: {docx: true, vaultSave: true, fileList: true}
   }, "*", [channel.port2]);
 });
 async function refresh() {
-  const node = await vault.files();
+  const node = await vault.files({include:'qnote,qochart,pdf'});
   files = node.files;
   folders = node.folders;
-  const file = files.find(data => data.fileId === currentId);
+  const file = currentId && files.find(data => data.fileId === currentId && /\.(qnote|qoslides)$/i.test(data.path));
   if (file) {
     current = file.path;
-    document.querySelector("#currentNote").textContent = current;
   }
+  const diagram = chart.fileId && files.find(data => data.fileId === chart.fileId && /\.qochart$/i.test(data.path));
+  if (diagram) chart.path = diagram.path;
+  updateTitle();
   document.querySelector(".workspace-name").textContent = node.root.split(/[\\/]/).pop() || "Vault";
   document.querySelector(".workspace-name").title = node.root;
   render();
 }
 function render() {
+  rememberFolders();
   list.replaceChildren();
   const value = search.value.toLowerCase();
   const value2 = {
@@ -234,11 +352,12 @@ function render() {
       summary.className = "folder-row";
       const span = document.createElement("span");
       span.className = "file-icon";
-      span.textContent = "▸";
+      span.classList.add('folder-chevron'); span.append(vaultIcon('chevron'));
+      const folderIcon = vaultIcon('folder');
       const span2 = document.createElement("span");
       span2.className = "folder-name";
       span2.textContent = value5;
-      summary.append(span, span2);
+      summary.append(span, folderIcon, span2);
       summary.onclick = () => {
         selectedFolder = value7;
         say("Folder: " + value7);
@@ -250,8 +369,9 @@ function render() {
       };
       installFolderDrop(summary, value7);
       details.ontoggle = () => {
+        if (!details.isConnected || search.value) return;
         if (details.open) openFolders.add(value7);else openFolders.delete(value7);
-        span.textContent = details.open ? "▾" : "▸";
+        rememberFolders();
       };
       const div = document.createElement("div");
       div.className = "tree-children";
@@ -262,10 +382,10 @@ function render() {
     for (const file of node.files.sort((value5, value6) => value5.name.localeCompare(value6.name))) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "file-item" + (file.path === current ? " selected" : "");
+      button.className = "file-item" + (file.path === activePath() ? " selected" : "");
       const span = document.createElement("span");
       span.className = "file-icon";
-      span.textContent = "▤";
+      span.append(vaultIcon(/\.qochart$/i.test(file.path) ? 'chart' : /\.pdf$/i.test(file.path) ? 'pdf' : 'file'));
       const span2 = document.createElement("span");
       span2.className = "file-name";
       span2.textContent = file.name;
@@ -285,7 +405,14 @@ function render() {
         event.stopPropagation();
         showContext(event, file.path);
       };
-      value3.append(button);
+      if (file.path === activePath()) button.setAttribute('aria-current', 'true');
+      const row = document.createElement('div'); row.className = 'file-row';
+      const actions = document.createElement('button'); actions.type = 'button'; actions.className = 'file-actions';
+      actions.dataset.filePath = file.path;
+      actions.title = 'File actions'; actions.setAttribute('aria-label', 'Actions for ' + file.name);
+      actions.setAttribute('aria-haspopup', 'menu'); actions.append(vaultIcon('more'));
+      actions.onclick = event => { event.stopPropagation(); const rect = actions.getBoundingClientRect(); showContext({clientX:rect.right,clientY:rect.bottom}, file.path); fileMenuTrigger = actions; };
+      row.append(button, actions); value3.append(row);
     }
   }
   draw2(value2, list);
@@ -297,17 +424,20 @@ pdfFrame.title = 'PDF Viewer';
 pdfFrame.allow = 'clipboard-read; clipboard-write';
 pdfFrame.hidden = true;
 frame.parentElement.appendChild(pdfFrame);
+const chart = new VaultChart(vault, frame.parentElement, message => { updateTitle(); render(); say(message); if (message.startsWith('Saved ')) refresh().catch(error=>say(error.message)); });
+function activePath() { return activePane === 'chart' ? chart.path : activePane === 'pdf' ? pdfPath : current; }
+function updateTitle() { document.querySelector('#currentNote').textContent = activePath() || 'No vault document selected'; }
 const paneNav = document.createElement('div');
 paneNav.className = 'iframe-nav';
 const hotswap = document.createElement('button');
 hotswap.className = 'iframe-nav-arrow';
-hotswap.textContent = '⇄';
+hotswap.append(vaultIcon('switch'));
 hotswap.title = 'Switch to previous app';
 hotswap.setAttribute('aria-label', hotswap.title);
 const paneSelect = document.createElement('select');
 paneSelect.className = 'iframe-nav-select';
 paneSelect.setAttribute('aria-label', 'Switch app');
-for (const [value, label] of [['editor', 'QoWrite'], ['pdf', 'PDF Viewer']]) {
+for (const [value, label] of [['editor', 'QoWrite'], ['chart', 'QoChart'], ['pdf', 'PDF Viewer']]) {
   const option = document.createElement('option');
   option.value = value;
   option.textContent = label;
@@ -317,7 +447,7 @@ paneNav.append(hotswap, paneSelect);
 status.before(paneNav);
 let activePane = 'editor',
   previousPane = 'pdf',
-  pdfId = '';
+  pdfId = '', pdfPath = '';
 function switchPane(id) {
   if (id !== activePane) {
     previousPane = activePane;
@@ -325,8 +455,11 @@ function switchPane(id) {
   }
   frame.hidden = id !== 'editor';
   pdfFrame.hidden = id !== 'pdf';
+  chart.frame.hidden = id !== 'chart';
   paneSelect.value = id;
   if (id === 'pdf' && !pdfFrame.getAttribute('src')) pdfFrame.src = 'recto/index.html';
+  if (id === 'chart') chart.ready().catch(error => say(error.message));
+  updateTitle(); render();
 }
 paneSelect.onchange = () => switchPane(paneSelect.value);
 hotswap.onclick = () => switchPane(previousPane);
@@ -341,11 +474,18 @@ async function openPdf(path, id, page = 1, annotId = "") {
     else pdfFrame.contentWindow.location.hash = hash;
   } else pdfFrame.src = 'recto/index.html' + hash;
   pdfId = identity.fileId;
+  pdfPath = identity.path;
   switchPane('pdf');
   say('Opened ' + identity.path);
   setFiles(false);
 }
 async function open(path, value = "") {
+  if (/\.qochart$/i.test(path)) {
+    if (await chart.open(path, value)) {
+      switchPane('chart'); selectedFolder = chart.path.split('/').slice(0,-1).join('/'); setFiles(false);
+    }
+    return;
+  }
   if (/\.pdf$/i.test(path)) {
     await openPdf(path, value);
     return;
@@ -355,8 +495,7 @@ async function open(path, value = "") {
     setFiles(false);
     return;
   }
-  if (current && !confirm("Save the current note before opening another? Cancel keeps this note open.")) return;
-  if (current) await save();
+  if (!await noteReplaceCheck()) return;
   const data = await vault.note(path, value || undefined);
   // An older server may hand back a legacy empty JSON list for a note it
   // created; the editor only opens QNote XML, so give it an empty document.
@@ -365,8 +504,9 @@ async function open(path, value = "") {
   await editor("LOAD", {
     doc
   });
-  current = data.noteId;
-  currentId = data.fileId;
+  noteBaseline = (await editor('SAVE')).doc;
+  current = data.noteId || path;
+  currentId = data.fileId || value || '';
   path = current;
   switchPane("editor");
   selectedFolder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
@@ -378,15 +518,19 @@ async function open(path, value = "") {
 async function save() {
   await pdfFrame.contentWindow?.__rectoHost?.flush();
   if (!current) {
-    say("Create or open a vault note before saving.");
-    return;
+    let name = prompt('Save note to vault as', 'Untitled.qnote');
+    if (!name) throw Error('Save cancelled.');
+    if (!/\.qnote$/i.test(name)) name += '.qnote';
+    await vault.create(name);
+    const identity = await vault.fileId(name); current = identity.path; currentId = identity.fileId;
   }
   const path = current;
   say("Saving…");
   const value = await editor("SAVE");
   const data = await vault.saveNoteChunked(path, value.doc, {fileId: currentId || undefined});
-  current = data.noteId;
-  currentId = data.fileId;
+  current = data.noteId || path;
+  currentId = data.fileId || currentId || '';
+  noteBaseline = value.doc;
   say("Saved " + path);
   await refresh();
 }
@@ -420,8 +564,15 @@ document.querySelector("#newFolderHeaderBtn").onclick = () => run(async () => {
   await vault.createFolder(newPath(value));
   await refresh();
 });
+document.querySelector('#newChartHeaderBtn').onclick = () => run(async () => {
+  let name = prompt('New diagram name', 'Untitled.qochart');
+  if (!name) return;
+  if (!/\.qochart$/i.test(name)) name += '.qochart';
+  const path = newPath(name); await vault.create(path); await refresh(); await open(path);
+});
 document.querySelector("#saveVault").onclick = () => run(async()=>{
   if(activePane==='pdf'){await pdfFrame.contentWindow?.__rectoHost?.flush();say('PDF annotations saved');}
+  else if(activePane==='chart') { await chart.ready(); chart.chooseSave(); }
   else await editor('SAVE_OPTIONS');
 });
 document.querySelector("#refreshVault").onclick = () => run(refresh);
@@ -462,28 +613,29 @@ document.querySelector("#vaultRoot").onclick = () => {
   say("New items will be created in the vault root");
 };
 let pdfViewer = false;
+let serverAdminUrl = '';
 (async () => {
   try { const r = await fetch(new URL('recto/index.html', VaultClient.packageBase), {method: 'HEAD', cache: 'no-store'}); pdfViewer = r.ok && /text\/html/.test(r.headers.get('content-type') || '') && !VaultClient.embedded; } catch {}
-  if (!pdfViewer) { paneNav.hidden = true; }
-  document.querySelector("#adminLink").hidden = !(await vault.supports('settings'));
+  paneSelect.querySelector('option[value="pdf"]').hidden = !pdfViewer;
 })();
 document.querySelector("#adminLink").onclick = async event => {
   event.preventDefault();
   await run(async () => {
     await pdfFrame.contentWindow?.__rectoHost?.flush();
-    if (current) {
-      if (!confirm("Save this note and open vault settings?")) return;
-      await save();
-    }
-    VaultClient.navigate("admin.html", server);
+    if (!await chart.replaceCheck()) return;
+    if (!await noteReplaceCheck()) return;
+    if (serverAdminUrl) {
+      // The server renders its own account and folder-access administration.
+      const target = new URL(serverAdminUrl, server || location.origin);
+      if (!['http:', 'https:'].includes(target.protocol) || target.origin !== new URL(server || location.origin).origin) throw Error('Invalid admin page address');
+      location.assign(target.href);
+    } else VaultClient.navigate("admin.html", server);
   });
 };
 document.querySelector("#logout").onclick = () => run(async () => {
+  if (!await chart.replaceCheck()) return;
   await pdfFrame.contentWindow?.__rectoHost?.flush();
-  if (current) {
-    if (!confirm("Save this note and sign out?")) return;
-    await save();
-  }
+  if (!await noteReplaceCheck()) return;
   await vault.logout();
   VaultClient.navigate("login.html", server);
 });
@@ -491,13 +643,13 @@ search.oninput = render;
 addEventListener("keydown", event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
-    void run(save);
+    document.querySelector('#saveVault').click();
   }
 });
 const context = document.querySelector("#context");
+let fileMenuTrigger = null;
 async function showDocx() {
   if (busy) return;
-  if (!(await vault.supports('docx'))) { alert('This server does not provide DOCX conversion. Use File → Save to download the .qnote instead.'); return; }
   document.getElementById("vault-docx-dialog")?.remove();
   const dialog = document.createElement("dialog");
   dialog.id = "vault-docx-dialog";
@@ -530,17 +682,33 @@ async function showDocx() {
       if (value2.size > 32 * 1024 * 1024) throw Error("Choose a DOCX under 32 MB");
       const value3 = prompt("Import as a new vault note", newPath(value2.name.replace(/\.docx$/i, ".qnote")));
       if (!value3) return;
-      const data = await vault.importDocx(value3, value2);
+      let path = value3, fileId;
+      try {
+        const bytes = new Uint8Array(await value2.arrayBuffer());
+        const {xml} = await QNoteDocx.importDocx(bytes);
+        await vault.create(value3).catch(() => {});
+        ({fileId} = await vault.saveNote(value3, xml));
+      } catch (error) {
+        if (!error.docxUnavailable) throw error;
+        if (!(await vault.supports('docx'))) throw error;
+        ({path, fileId} = await vault.importDocx(value3, value2));
+      }
       await refresh();
-      await open(data.path, data.fileId);
-      say("Imported " + data.path);
+      await open(path, fileId);
+      say("Imported " + path);
     });
   };
   value("Export DOCX", () => {
     dialog.close();
     void run(async () => {
       const value2 = await editor("SAVE");
-      const event = await vault.exportDocx(value2.doc);
+      let event;
+      try { event = await QNoteDocx.exportDocx(value2.doc); }
+      catch (error) {
+        if (!error.docxUnavailable) throw error;
+        if (!(await vault.supports('docx'))) throw error;
+        event = await vault.exportDocx(value2.doc);
+      }
       const value3 = Uint8Array.from(atob(event.data), value5 => value5.charCodeAt(0));
       const value4 = URL.createObjectURL(new Blob([value3], {
         type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -560,22 +728,23 @@ async function showDocx() {
   dialog.showModal();
 }
 function showContext(value, path, value2 = "file") {
+  fileMenuTrigger = document.activeElement;
   context.replaceChildren();
   const value3 = value2 === "folder" ? path : value2 === "root" ? "" : path.split("/").slice(0, -1).join("/");
   const value4 = async value6 => {
-    let path2 = prompt(value6 === "note" ? "New note name" : "New folder name", value6 === "note" ? "Untitled.qnote" : "");
+    let path2 = prompt(value6 === "folder" ? "New folder name" : "New document name", value6 === "note" ? "Untitled.qnote" : value6 === 'chart' ? 'Untitled.qochart' : "");
     if (!path2) return;
     if (value6 === "note" && !path2.endsWith(".qnote")) path2 += ".qnote";
+    if (value6 === 'chart' && !/\.qochart$/i.test(path2)) path2 += '.qochart';
     const value7 = value3 ? value3 + "/" + path2 : path2;
-    if (value6 === "note") await vault.create(value7); else await vault.createFolder(value7);
+    if (value6 !== "folder") await vault.create(value7); else await vault.createFolder(value7);
     if (value3) openFolders.add(value3);
     await refresh();
-    if (value6 === "note") await open(value7);
+    if (value6 !== "folder") await open(value7);
   };
-  const value5 = [["New note", () => value4("note")], ["New folder", () => value4("folder")], ["Upload QNote / PDF", () => chooseUpload(value3)], ["Refresh", refresh]];
+  const value5 = [["New note", () => value4("note")], ["New diagram", () => value4("chart")], ["New folder", () => value4("folder")], ["Upload QNote / QoChart / PDF", () => chooseUpload(value3)], ["Refresh", refresh]];
   if (path) value5.push(["Copy relative path", async () => {
-    await navigator.clipboard.writeText(path);
-    say("Path copied");
+    await copyRelativePath(path);
   }]);
   if (value2 === "folder") value5.push(["Expand / collapse", async () => {
     if (openFolders.has(path)) openFolders.delete(path);else openFolders.add(path);
@@ -587,14 +756,17 @@ function showContext(value, path, value2 = "file") {
   }]);
   if (value2 === "file") value5.unshift(["Open", () => open(path)], ["Duplicate", async () => {
     if (current === path) await save();
-    let path2 = prompt("Duplicate note as", path.replace(/\.qnote$/i, " copy.qnote"));
+    if (chart.path === path) await chart.save();
+    const extension = path.slice(path.lastIndexOf('.'));
+    let path2 = prompt("Duplicate document as", path.slice(0,-extension.length) + ' copy' + extension);
     if (!path2) return;
-    if (!path2.endsWith(".qnote")) path2 += ".qnote";
+    if (!path2.toLowerCase().endsWith(extension.toLowerCase())) path2 += extension;
     await vault.duplicate(path, path2);
     await refresh();
   }], ["Download copy", async () => {
+    if (chart.path === path) { chart.download(); return; }
     if (current === path) await save();
-    const value6 = await vault.note(path);
+    const value6 = /\.qochart$/i.test(path) ? await vault.chart(path) : await vault.note(path);
     const value7 = URL.createObjectURL(new Blob([typeof value6.doc === "string" ? value6.doc : JSON.stringify(value6.doc)], {
       type: "application/octet-stream"
     }));
@@ -607,7 +779,9 @@ function showContext(value, path, value2 = "file") {
     const value6 = prompt("New vault-relative path", path);
     if (!value6 || value6 === path) return;
     if (current === path) await save();
+    if (chart.path === path) await chart.save();
     await vault.move(path, value6);
+    if (chart.path === path) chart.path = value6;
     if (current === path) {
       current = value6;
       document.querySelector("#currentNote").textContent = value6;
@@ -616,7 +790,13 @@ function showContext(value, path, value2 = "file") {
   }], ["Move to Trash", async () => {
     if (!confirm("Move " + path + " to recoverable vault trash?")) return;
     await vault.remove(path);
+    if (chart.path === path) {
+      chart.frame.contentWindow.graph.fromJSON({items:[]}); chart.frame.contentWindow.graph.render();
+      chart.path = ''; chart.fileId = ''; chart.baseline = chart.snapshot();
+    }
     if (current === path) {
+      await editor('LOAD', {doc:'<?xml version="1.0"?><qnote v="1"><doc><qotext></qotext></doc></qnote>'});
+      noteBaseline = (await editor('SAVE')).doc;
       current = "";
       currentId = "";
       document.querySelector("#currentNote").textContent = "No vault note selected";
@@ -628,6 +808,7 @@ function showContext(value, path, value2 = "file") {
     if (/\.pdf$/i.test(path) && ["Duplicate", "Download copy"].includes(value6)) continue;
     const button = document.createElement("button");
     button.textContent = value6;
+    button.setAttribute('role', 'menuitem');
     button.onclick = () => {
       context.hidden = true;
       void run(value7);
@@ -667,6 +848,11 @@ divider.onpointermove = value => {
 void run(async () => {
   const state = await vault.session();
   if (!state.authenticated) { VaultClient.navigate('login.html', server); return; }
+  serverAdminUrl = state.adminUrl || (state.role === 'admin' ? '/auth/admin' : '');
+  const adminLink = document.querySelector('#adminLink');
+  adminLink.textContent = 'Admin';
+  adminLink.hidden = !serverAdminUrl && !(await vault.supports('settings'));
+  if (serverAdminUrl) adminLink.href = new URL(serverAdminUrl, server || location.origin).href;
   document.querySelector('#logout').hidden = state.username === 'local' && !state.setup && !(await vault.supports('settings'));
   await refresh();
   // Only a signed-in window serves the automation API.
@@ -676,7 +862,7 @@ let focusTimer;
 addEventListener("focus", () => {
   clearTimeout(focusTimer);
   focusTimer = setTimeout(() => {
-    if (!busy && ready) void run(refresh);
+    if (!busy && ready && context.hidden && !document.body.classList.contains('files-open')) void run(refresh);
   }, 250);
 });
 // Embedded (qoqoro.js): the editor page is fetched and mounted as srcdoc so a
@@ -685,12 +871,12 @@ if (VaultClient.embedded) VaultClient.frameDocument("qnote/index.html", "<script
 else frame.src = "qnote/index.html";
 const uploadInput = document.createElement('input');
 uploadInput.type = 'file';
-uploadInput.accept = '.pdf,.qnote';
+uploadInput.accept = '.pdf,.qnote,.qochart';
 uploadInput.multiple = true;
 uploadInput.hidden = true;
 document.body.appendChild(uploadInput);
 const uploadButton = document.querySelector('#uploadHeaderBtn');
-uploadButton.title = 'Upload PDF or QNote into the selected folder';
+uploadButton.title = 'Upload PDF, QNote or QoChart into the selected folder';
 let uploadDestination = '';
 function chooseUpload(destination = selectedFolder) {
   uploadDestination = destination;
@@ -701,8 +887,8 @@ async function uploadFiles(incoming, destination = selectedFolder) {
   let count = 0;
   const errors = [];
   for (const file of incoming) {
-    if (!/\.(pdf|qnote)$/i.test(file.name)) {
-      errors.push(file.name + ': only PDF and QNote files are supported');
+    if (!/\.(pdf|qnote|qochart)$/i.test(file.name)) {
+      errors.push(file.name + ': only PDF, QNote and QoChart files are supported');
       continue;
     }
     if (file.size > 128 * 1024 * 1024) {
@@ -721,14 +907,19 @@ async function uploadFiles(incoming, destination = selectedFolder) {
     }
     try {
       say('Uploading ' + name + '…');
-      await vault.upload(destination ? destination + '/' + name : name, file);
-      count++;
+      const target = destination ? destination + '/' + name : name;
+      await vault.upload(target, file);
       await refresh();
+      if (!files.some(f => f.path === target)) throw Error('The server accepted the upload but did not list ' + target + '. Check the server vault path and file permissions before uploading again.');
+      count++;
     } catch (e) {
       errors.push(file.name + ': ' + e.message);
     }
   }
-  if (destination) openFolders.add(destination);
+  if (destination) {
+    const parts = destination.split('/');
+    for (let i = 1; i <= parts.length; i++) openFolders.add(parts.slice(0, i).join('/'));
+  }
   render();
   say('Uploaded ' + count + ' file(s)' + (errors.length ? ' — ' + errors.join('; ') : ''));
   if (errors.length) alert(errors.join('\n'));
@@ -789,7 +980,9 @@ async function moveVaultFile(source, destination) {
     throw Error('A file named ' + name + ' already exists in ' + (destination || 'the vault root'));
   await pdfFrame.contentWindow?.__rectoHost?.flush();
   if (current === source) await save();
+  if (chart.path === source) await chart.save();
   await vault.move(source, target);
+  if (chart.path === source) chart.path = target;
   if (current === source) {
     current = target;
     document.querySelector('#currentNote').textContent = target;
@@ -810,11 +1003,15 @@ window.addEventListener("message", event => {
 async function runProgramHere(job) {
   const source = String(job.source || "");
   if (!source.trim()) throw Error("The program is empty");
-  if (job.path) await open(String(job.path), String(job.fileId || ""));
-  if (!current) throw Error("Open a vault note first");
+  if (job.path) {
+    if (!/\.(qnote|qoslides)$/i.test(String(job.path))) throw Error('The program target must be a QNote, not a diagram');
+    await open(String(job.path), String(job.fileId || ""));
+  }
   // Booting the Luau VM on the first run takes longer than a poke.
   const outcome = await editor("RUN_PROGRAM", {source, apply: job.apply !== false}, 120000);
-  const saved = job.save !== false && job.apply !== false;
+  // An unsaved live editor is a valid target. Never force a Save As prompt
+  // or try to save it under the active diagram's filename.
+  const saved = job.save !== false && job.apply !== false && /\.(qnote|qoslides)$/i.test(current);
   if (saved) await save();
   return {ok: true, applied: !!outcome.applied, commands: outcome.commands || 0,
     output: outcome.output || [], status: outcome.status || "", result: outcome.result,
@@ -822,6 +1019,20 @@ async function runProgramHere(job) {
 }
 
 window.addEventListener("message", async event => {
+  if (event.source === chart.frame.contentWindow) {
+    let request=event.data;
+    if(typeof request==='string'){try{request=JSON.parse(request);}catch{return;}}
+    if(request?.type!=='QOCHART_RUN_QNOTE')return;
+    // srcdoc's location.origin can be "null" even with same-origin access.
+    // The source window is already authenticated by its iframe identity.
+    const replyOrigin=event.origin&&event.origin!=='null'?event.origin:'*';
+    // Bindweb's Nim event reader receives JSON strings, not JS objects.
+    const reply=(result,error)=>event.source.postMessage(JSON.stringify({type:'QOCHART_QNOTE_RESULT',id:request.id,result,error}),replyOrigin);
+    try {
+      reply(await runProgramHere({path:request.target,source:request.program,apply:request.apply,save:request.save}));
+    } catch(error) { reply(null,error.message||String(error)); }
+    return;
+  }
   if (event.source !== window.parent || event.data?.type !== "QOQORO_RUN_PROGRAM") return;
   const {id} = event.data;
   const reply = (result, error) =>

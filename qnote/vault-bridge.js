@@ -20,6 +20,25 @@
 (() => {
   const STORAGE_KEY = 'qoqoro-server';
   let port, pendingSave = null, exporting = false, vaultDownloads = 0, server = null, features = {};
+  // Workspace owns branding when it also owns file navigation. Editor-only
+  // embeds retain their brand; connecting a server alone does not hide it.
+  function updateBrand() {
+    const brand = document.querySelector('#tab-strip .brand');
+    if (!brand) return false;
+    if (brand.textContent !== 'QOQORO 書く') brand.textContent = 'QOQORO 書く';
+    document.documentElement.classList.toggle('qoqoro-vault-host', features.fileList === true);
+    return true;
+  }
+  const brandStyle = document.createElement('style');
+  brandStyle.textContent = '.qoqoro-vault-host #tab-strip .brand{display:none!important}';
+  document.head.append(brandStyle);
+  const findBrand = new MutationObserver(() => {
+    if (!updateBrand()) return;
+    findBrand.disconnect();
+    new MutationObserver(updateBrand).observe(document.querySelector('#tab-strip'), {childList:true,subtree:true,characterData:true});
+  });
+  findBrand.observe(document.documentElement, {childList:true,subtree:true});
+  updateBrand();
   const send = value => port?.postMessage(value);
   const status = text => { const el = document.getElementById('qnote-status-text'); if (el) el.textContent = text; window.dispatchEvent(new Event('qoqoro-document-state')); };
 
@@ -125,7 +144,7 @@
         // Flask or Node server) asks for a run without opening the dialog.
         else if (msg.type === 'RUN_PROGRAM') {
           if (!globalThis.QNoteAutomation) throw Error('This editor build has no automation API');
-          globalThis.QNoteAutomation.run(String(msg.source || ''), {apply: msg.apply !== false})
+          runWithDirectives(String(msg.source || ''), msg.apply !== false)
             .then(result => send({type: 'PROGRAM_RESULT', id: msg.id, ...result}),
                   e => send({type: 'ERROR', id: msg.id, error: e.message, output: e.output || []}));
         }
@@ -262,8 +281,252 @@
         client.session().then(state => { if (state.authenticated) { standalone.client = client; standalone.username = state.username || ''; status('Connected to ' + remembered + ' · Open and Save use the server'); } }).catch(() => {});
       }
     }
+    // ── the editor's own Misc actions, driven without its dialog ──
+    // QNote applies templates, programs and "save in document" through a
+    // hidden textarea and answers on another. `api: true` is what its own
+    // automation API sends: no dialog session to match.
+    const miscData = document.getElementById('qnote-misc-data');
+    const miscAction = document.getElementById('qnote-misc-action');
+    const miscWaiters = [];
+    if (miscData) {
+      const own = Object.getOwnPropertyDescriptor(miscData, 'value') ||
+                  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(miscData), 'value');
+      Object.defineProperty(miscData, 'value', {configurable: true, get() { return own.get.call(this); }, set(value) {
+        own.set.call(this, value);
+        let data; try { data = JSON.parse(value); } catch { return; }
+        if (data?.mode === 'result' && miscWaiters.length) miscWaiters.shift()(data);
+      }});
+    }
+    const runMisc = (data, timeoutMs = 20000) => new Promise((resolve, reject) => {
+      if (!miscData || !miscAction) return reject(Error('This editor build cannot be driven from outside'));
+      const timer = setTimeout(() => { const i = miscWaiters.indexOf(done); if (i >= 0) miscWaiters.splice(i, 1); reject(Error('The editor did not answer in time')); }, timeoutMs);
+      function done(result) {
+        clearTimeout(timer);
+        // QNote reports "Saved" for save/remove; other actions close the dialog on success.
+        const ok = ['save', 'remove'].includes(data.op) ? result.message === 'Saved' : result.close === true;
+        ok ? resolve(result) : reject(Error(result.message || 'The editor refused ' + data.op));
+      }
+      miscWaiters.push(done);
+      miscAction.value = JSON.stringify({...data, api: true});
+      miscAction.dispatchEvent(new Event('change', {bubbles: true}));
+    });
+
+    // ── the server library (library_bp.py) and plugins (plugins_bp.py) ──
+    // Both live only on a server: with none there is simply no Library.
+    const libraryClient = () => standalone.client ||
+      (typeof server === 'string' && typeof VaultClient === 'function' ? new VaultClient(server, {onUnauthorized: () => {}}) : null);
+    const templateKeys = source => [...new Set([...String(source).matchAll(/\{\{(.*?)\}\}/g)].map(m => m[1].trim()))];
+    const templateVariables = (source, given) => {
+      const vars = {};
+      for (const key of templateKeys(source)) vars[key] = given && given[key] != null ? String(given[key]) : '';
+      return vars;
+    };
+    async function insertTemplate(source, variables) {
+      const vars = templateVariables(source, variables);
+      // Newer editors insert XML objects (images, tables, …) too.
+      if (globalThis.QNoteAutomation?.applyTemplate) return globalThis.QNoteAutomation.applyTemplate(source, vars);
+      await runMisc({op: 'template', source, variables: JSON.stringify(vars)});
+    }
+    // QNote's Templates dialog lists the server's templates beside its own
+    // when this is set; without a server there is none, and it shows only
+    // the built-in and in-document ones.
+    Object.defineProperty(globalThis, 'QNoteTemplateLibrary', {configurable: true, get() {
+      const client = libraryClient();
+      if (!client) return null;
+      return {
+        list: () => client.get('/api/library/templates'),
+        get: id => client.get('/api/library/templates', {id}),
+        save: (name, source) => client.post('/api/library/templates', {name, source}),
+        remove: id => client.request('DELETE', '/api/library/templates', {query: {id}}),
+      };
+    }});
+    // A program file holds Luau, or a JSON wrapper {"language":"lua","source"}
+    // (how QNote saves one in a document), or the older JSON command list.
+    const programEntry = source => {
+      try {
+        const data = JSON.parse(source);
+        if (data && data.language === 'lua' && typeof data.source === 'string') return {language: 'lua', source: data.source};
+        return {language: 'json', source};
+      } catch { return {language: 'lua', source}; }
+    };
+    async function runProgramSource(entry, apply = true) {
+      if (entry.language === 'json') {
+        if (apply) await runMisc({op: 'run', source: entry.source});
+        return {ok: true, applied: apply, commands: 0, output: []};
+      }
+      return globalThis.QNoteAutomation.run(entry.source, {apply});
+    }
+    // QoChart's "QNote template" block compiles to a directive line inside the
+    // Luau it sends: `--@qnote-template {"id": ..., "variables": {...}}`. Being
+    // a Luau comment, it is harmless to an older bridge. Here the program is
+    // cut at each directive: Luau before it runs, the template goes in, and so
+    // on in order -- each piece is its own undo step.
+    async function runWithDirectives(source, apply) {
+      const lines = source.split('\n');
+      if (!lines.some(line => line.startsWith('--@qnote-template '))) return globalThis.QNoteAutomation.run(source, {apply});
+      const total = {ok: true, applied: false, commands: 0, output: [], status: '', templates: 0};
+      let chunk = [];
+      const flush = async () => {
+        const text = chunk.join('\n'); chunk = [];
+        if (!text.split('\n').some(line => line.trim() && !line.trim().startsWith('--'))) return;
+        const result = await globalThis.QNoteAutomation.run(text, {apply});
+        total.commands += result.commands || 0;
+        total.output.push(...(result.output || []));
+        total.applied = total.applied || !!result.applied;
+      };
+      for (const line of lines) {
+        if (!line.startsWith('--@qnote-template ')) { chunk.push(line); continue; }
+        await flush();
+        let directive;
+        try { directive = JSON.parse(line.slice('--@qnote-template '.length)); }
+        catch { throw Error('A QNote template block sent an unreadable request'); }
+        const client = libraryClient();
+        if (!client) throw Error('Inserting a QNote template needs a QNote Vault server');
+        const item = await client.get('/api/library/templates', {id: String(directive.id || '')});
+        if (apply) { await insertTemplate(item.source, directive.variables); total.applied = true; }
+        total.templates++;
+      }
+      await flush();
+      total.status = total.templates + ' template(s) and ' + total.commands + ' command(s) applied';
+      return total;
+    }
+
+    // Templates and programs saved inside this document, from its XML.
+    async function documentItems() {
+      const xml = await captureDoc();
+      const doc = new DOMParser().parseFromString(xml, 'application/xml').querySelector('doc');
+      let meta = {};
+      try { meta = JSON.parse(doc?.getAttribute('qnote-meta') || '{}'); } catch {}
+      const pick = list => (Array.isArray(list) ? list : []).filter(i => i && typeof i.name === 'string' && typeof i.source === 'string');
+      return {templates: pick(meta.templates), programs: pick(meta.programs)};
+    }
+
+    function libraryDialog() {
+      document.getElementById('qoqoro-library-dialog')?.remove();
+      const dialog = document.createElement('dialog'); dialog.id = 'qoqoro-library-dialog';
+      dialog.setAttribute('aria-label', 'Library');
+      dialog.style.cssText = 'box-sizing:border-box;width:min(620px,calc(100vw - 24px));max-height:86vh;padding:0;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font:13px Inter,"Segoe UI",system-ui,sans-serif;box-shadow:0 16px 48px #0003';
+      const el = (tag, css, text) => { const n = document.createElement(tag); if (css) n.style.cssText = css; if (text != null) n.textContent = text; return n; };
+      const btn = (text, onclick, primary) => { const b = el('button', 'padding:6px 10px;min-height:32px;border-radius:6px;font:inherit;cursor:pointer;border:1px solid ' + (primary ? '#2563eb;background:#2563eb;color:#fff' : '#cbd5e1;background:#f8fafc;color:#0f172a'), text); b.type = 'button'; b.onclick = onclick; return b; };
+      const head = el('div', 'display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #e2e8f0');
+      head.append(el('strong', 'font-size:16px;flex:1', 'Library'));
+      const tabs = {};
+      for (const [kind, label] of [['templates', 'Templates'], ['programs', 'Programs']]) {
+        tabs[kind] = btn(label, () => show(kind)); head.append(tabs[kind]);
+      }
+      const body = el('div', 'max-height:62vh;overflow:auto;padding:12px 16px');
+      const message = el('p', 'min-height:18px;margin:0;padding:8px 16px;color:#334155;border-top:1px solid #e2e8f0');
+      message.setAttribute('role', 'status');
+      const foot = el('div', 'display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding:10px 16px;border-top:1px solid #e2e8f0');
+      dialog.append(head, body, message, foot);
+      const say = (text, error) => { message.textContent = text; message.style.color = error ? '#b91c1c' : '#334155'; };
+      const client = libraryClient();
+      if (client) foot.append(btn('Manage plugins…', () => window.open((client.base || '') + '/plugins', '_blank', 'noopener')));
+      foot.append(btn('Close', () => dialog.close()));
+
+      let current = 'templates', library = null, inDocument = null;
+      const section = title => { const s = el('section', 'margin:0 0 14px'); s.append(el('h3', 'margin:4px 0 8px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#64748b', title)); body.append(s); return s; };
+      const row = (parent, name, detail, actions) => {
+        const r = el('div', 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px');
+        const text = el('div', 'flex:1;min-width:160px');
+        text.append(el('div', 'font-weight:600', name));
+        if (detail) text.append(el('div', 'color:#64748b;font-size:12px', detail));
+        r.dataset.name = name; r.append(text, ...actions); parent.append(r);
+      };
+      async function askVariables(source) {
+        const keys = templateKeys(source);
+        if (!keys.length) return {};
+        return new Promise(resolve => {
+          const form = el('form', 'display:grid;gap:8px;padding:10px;margin:0 0 12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px');
+          form.append(el('strong', '', 'Fill in the template'));
+          const inputs = keys.map(key => {
+            const label = el('label', 'display:grid;gap:3px;font-weight:600', key);
+            const input = el('input', 'padding:7px;border:1px solid #cbd5e1;border-radius:6px;font:inherit;font-weight:400');
+            label.append(input); form.append(label); return [key, input];
+          });
+          const actions = el('div', 'display:flex;gap:8px;justify-content:flex-end');
+          actions.append(btn('Cancel', () => { form.remove(); resolve(null); }), btn('Insert', () => form.requestSubmit(), true));
+          form.append(actions);
+          form.onsubmit = e => { e.preventDefault(); form.remove(); resolve(Object.fromEntries(inputs.map(([k, i]) => [k, i.value]))); };
+          body.prepend(form); inputs[0][1].focus();
+        });
+      }
+      const guard = async (label, work) => {
+        try { say(label + '…'); await work(); }
+        catch (e) { say(e.message, true); }
+      };
+      function show(kind) {
+        current = kind;
+        for (const [k, b] of Object.entries(tabs)) { b.style.background = k === kind ? '#2563eb' : '#f8fafc'; b.style.color = k === kind ? '#fff' : '#0f172a'; }
+        body.replaceChildren();
+        const serverPart = section('On the server');
+        if (!client) serverPart.append(el('p', 'color:#64748b;margin:0', 'No QNote Vault server is connected, so there is no server library or plugins here. ' +
+          (features.serverSettings ? 'Connect one with Misc → Server.' : '') + ' Templates and programs can still be kept in this document (Misc → Templates / Programs).'));
+        else if (!library) serverPart.append(el('p', 'color:#64748b;margin:0', 'Loading…'));
+        else if (!library[kind].length) serverPart.append(el('p', 'color:#64748b;margin:0', 'Nothing here yet. Upload one from this document below, or install a plugin.'));
+        else for (const item of library[kind]) {
+          const detail = [item.origin === 'plugin' ? 'Plugin · ' + item.plugin : 'Server', item.description].filter(Boolean).join(' · ');
+          const actions = [];
+          const fetchItem = () => client.get('/api/library/' + kind, {id: item.id});
+          if (kind === 'templates') actions.push(btn('Insert', () => guard('Inserting ' + item.name, async () => {
+            const full = await fetchItem(); const vars = await askVariables(full.source);
+            if (vars === null) { say(''); return; }
+            await insertTemplate(full.source, vars); say('Inserted ' + item.name);
+          }), true));
+          else actions.push(btn('Run', () => guard('Running ' + item.name, async () => {
+            const full = await fetchItem();
+            const result = await runProgramSource({language: full.language || 'lua', source: full.source});
+            say((result.output || []).join('\n') || 'Ran ' + item.name + (result.commands ? ' · ' + result.commands + ' command(s)' : ''));
+          }), true));
+          actions.push(btn('Save in document', () => guard('Saving ' + item.name + ' in this document', async () => {
+            const full = await fetchItem();
+            const source = kind === 'programs' && (full.language || 'lua') === 'lua' ? JSON.stringify({language: 'lua', source: full.source}) : full.source;
+            await runMisc({op: 'save', kind, name: item.name, source});
+            inDocument = null; say('Saved ' + item.name + ' in this document'); load();
+          })));
+          if (!item.readonly) actions.push(btn('Delete', () => guard('Deleting ' + item.name, async () => {
+            if (!confirm('Delete "' + item.name + '" from the server library?')) { say(''); return; }
+            await client.request('DELETE', '/api/library/' + kind, {query: {id: item.id}});
+            library = null; say('Deleted ' + item.name); load();
+          })));
+          row(serverPart, item.name, detail, actions);
+        }
+        const docPart = section('In this document');
+        if (!inDocument) docPart.append(el('p', 'color:#64748b;margin:0', 'Reading this document…'));
+        else if (!inDocument[kind].length) docPart.append(el('p', 'color:#64748b;margin:0', 'None saved in this document (Misc → ' + (kind === 'templates' ? 'Templates' : 'Programs') + ' → Save in document).'));
+        else for (const item of inDocument[kind]) {
+          const actions = client ? [btn('Upload to server', () => guard('Uploading ' + item.name, async () => {
+            const entry = kind === 'programs' ? programEntry(item.source) : {source: item.source};
+            await client.post('/api/library/' + kind, {name: item.name, source: entry.source, language: entry.language});
+            library = null; say('Uploaded ' + item.name + ' to the server library'); load();
+          }))] : [];
+          row(docPart, item.name, 'Saved in this .qnote file', actions);
+        }
+      }
+      async function load() {
+        show(current);
+        if (client && !library) {
+          try { library = await client.get('/api/library'); }
+          catch (e) { library = {templates: [], programs: []}; say(e.status === 404 ? 'This server has no library (update the server).' : 'Could not load the server library: ' + e.message, true); }
+        }
+        if (!inDocument) { try { inDocument = await documentItems(); } catch (e) { inDocument = {templates: [], programs: []}; say('Could not read this document: ' + e.message, true); } }
+        show(current);
+      }
+      dialog.onclose = () => dialog.remove();
+      document.body.append(dialog); dialog.showModal();
+      load();
+    }
+    const misc = document.getElementById('tab-misc');
+    if (misc && !document.getElementById('btn-qoqoro-library')) {
+      const sep = document.createElement('span'); sep.className = 'sep';
+      const b = document.createElement('button'); b.id = 'btn-qoqoro-library'; b.className = 'tool-text'; b.type = 'button';
+      b.title = 'Templates and programs on the server, from plugins, and in this document'; b.textContent = '📚 Library';
+      b.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); libraryDialog(); });
+      misc.append(sep, b);
+    }
+
     // Programmatic access for the host page (qoqoro.js) and tests.
-    globalThis.__qoqoroBridge = {captureDoc, loadDoc, serverDialog, standalone, get connected() { return connected(); }};
+    globalThis.__qoqoroBridge = {captureDoc, loadDoc, serverDialog, libraryDialog, insertTemplate, standalone, get connected() { return connected(); }};
     window.dispatchEvent(new Event('qoqoro-document-state'));
     send({type: 'READY'});
     return true;
@@ -273,6 +536,7 @@
     port = event.ports[0]; port.start();
     server = typeof event.data.server === 'string' ? event.data.server.replace(/\/+$/, '') : null;
     features = event.data.features || {};
+    updateBrand();
     if (install()) return;
     const observer = new MutationObserver(() => { if (install()) observer.disconnect(); });
     observer.observe(document.documentElement, {childList: true, subtree: true});

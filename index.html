@@ -13,12 +13,12 @@
 </head>
 <body>
 <header class="vault-header">
-  <button id="menuToggle" type="button" class="menu-toggle" aria-label="Toggle file list" aria-expanded="false" aria-controls="sidebar">☰</button>
-  <strong class="brand">QNote Vault</strong>
+  <button id="menuToggle" type="button" class="menu-toggle" aria-label="Toggle file list" title="Files" aria-expanded="false" aria-controls="sidebar" data-vault-icon="panel">Files</button>
+  <strong class="brand">QOQORO 書く</strong>
   <span id="currentNote">No vault note selected</span>
-  <button id="saveVault" type="button" title="Save (Ctrl+S)">Save</button>
+  <button id="saveVault" type="button" title="Save (Ctrl+S)" aria-label="Save" data-vault-icon="save">Save</button>
   <div class="header-more" id="headerMore">
-    <button id="moreToggle" type="button" class="more-toggle" aria-label="More actions" aria-haspopup="true" aria-expanded="false">⋮</button>
+    <button id="moreToggle" type="button" class="more-toggle" aria-label="More actions" title="More actions" aria-haspopup="true" aria-expanded="false" data-vault-icon="more">More</button>
     <div class="more-menu" id="moreMenu" role="menu" hidden>
       <button id="refreshVault" type="button" role="menuitem">Refresh</button>
       <button id="serverSettings" type="button" role="menuitem" title="Which QNote Vault server this page talks to">Server</button>
@@ -29,22 +29,24 @@
 </header>
 <div class="app-shell">
   <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
-  <aside class="sidebar" id="sidebar">
-    <button id="closeFiles" type="button" aria-label="Close file list">Close files ×</button>
+  <aside class="sidebar" id="sidebar" aria-label="Vault files">
+    <div class="drawer-heading"><span>Files</span><button id="closeFiles" type="button" aria-label="Close file list" title="Close files" data-vault-icon="close">Close files</button></div>
     <div class="sidebar-title-row">
       <span class="workspace-name" title="">Vault</span>
       <span class="sidebar-actions">
-        <button id="newNoteHeaderBtn" type="button" title="New note">+ Note</button>
-        <button id="newFolderHeaderBtn" type="button" title="New folder">+ Folder</button>
-        <button id="uploadHeaderBtn" type="button" title="Upload PDF or QNote">↥ Upload</button>
+        <button id="newNoteHeaderBtn" type="button" title="New note" aria-label="New note" data-vault-icon="note">New note</button>
+        <button id="newChartHeaderBtn" type="button" title="New QoChart diagram" aria-label="New diagram" data-vault-icon="chart">New diagram</button>
+        <button id="newFolderHeaderBtn" type="button" title="New folder" aria-label="New folder" data-vault-icon="folderPlus">New folder</button>
+        <button id="uploadHeaderBtn" type="button" title="Upload files" aria-label="Upload files" data-vault-icon="upload">Upload</button>
       </span>
     </div>
-    <input id="fileSearch" class="search-box" placeholder="Search notes…" aria-label="Search notes">
+    <input id="fileSearch" class="search-box" placeholder="Search files…" aria-label="Search files">
     <div class="sidebar-status" id="sendStatus">Loading vault…</div>
     <button id="vaultRoot" type="button" class="vault-root">Vault root</button>
-    <div id="fileList" class="file-list" role="tree"></div>
+    <nav id="fileList" class="file-list" aria-label="Vault documents"></nav>
   </aside>
   <div id="paneDivider" class="pane-divider" role="separator" aria-label="Resize sidebar"></div>
+  <button id="filesEdgeToggle" class="files-edge-toggle" type="button" title="Show files" aria-label="Show file list" aria-expanded="false" aria-controls="sidebar" data-vault-icon="chevron">Files</button>
   <main class="main-panel">
     <div class="iframe-wrap">
       <iframe id="editorFrame" name="editorFrame" title="QNote editor" allow="clipboard-read; clipboard-write"></iframe>
@@ -55,6 +57,9 @@
 <div id="workspaceNotice" role="status" aria-live="polite" hidden></div>
 <script src="protected-resources.js"></script>
 <script src="vault-client.js"></script>
+<script src="docx-runtime.js"></script>
+<script src="chart-workspace.js"></script>
+<script src="workspace-icons.js"></script>
 <script src="workspace.js"></script>
 </body>
 </html>
