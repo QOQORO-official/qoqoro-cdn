@@ -26,8 +26,10 @@
  *
  * Editor options:
  *   document   initial QNote XML, or a URL to fetch it from
- *   onSave     called with the XML when the user presses Save or Ctrl+S;
- *              without it, Save downloads a .qnote as the stock editor does
+ *   onSave     kept for compatibility; the Save button and Ctrl+S never call it.
+ *              With no server connected they always download a .qnote directly;
+ *              connected (Misc -> Server) they offer Save to server or a copy.
+ *              To store the XML yourself, call handle.save().
  *   filename   name for that download (default document.qnote)
  *   server     a QNote Vault server the editor's Open/Save should use; the
  *              user can also set or change it from the Misc tab (🔌 Server)
