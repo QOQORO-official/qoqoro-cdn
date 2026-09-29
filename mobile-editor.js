@@ -146,6 +146,9 @@ html,body{overflow:hidden!important;overscroll-behavior:none}
 #qnote-root #qnote-canvas-stage #qnote-hscrollbar{height:6px!important;background:transparent!important;scrollbar-width:none!important}
 #qnote-root #qnote-canvas-stage #qnote-hscrollbar::-webkit-scrollbar{display:none}
 #qnote-root #qnote-status{display:none}
+/* Drawing mode: only the document and the drawing toolbar. */
+html.qm-drawing #qm-quick,html.qm-drawing #tab-strip,html.qm-drawing #toolbar-container,html.qm-drawing #qm-touch{display:none!important}
+html.qm-drawing #qm-top .qm-icon{visibility:hidden}
 /* Formatting bar: fixed ends, scrolling middle, over the keyboard. */
 #qm-quick{grid-row:6;height:calc(52px + env(safe-area-inset-bottom,0px));padding:0 4px env(safe-area-inset-bottom,0px);border-top:1px solid var(--qm-line);gap:2px}
 #qm-quick .qm-scroll{flex:1;min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;
@@ -703,6 +706,15 @@ dialog.qnote-dialog:not(.qt-studio):not(.qnote-theme-dialog){position:fixed;inse
     for(const area of [vertical,horizontal])area.addEventListener('scroll',renderTouch,{passive:true});
     window.addEventListener('resize',renderTouch);
     small.addEventListener('change',renderTouch);
+    // Drawing mode owns the screen: the formatting bar, the ribbon sheet and
+    // the object handles step aside, and the app bar only names the mode.
+    window.addEventListener('qnote-drawing',e=>{
+      const on=!!e.detail?.active;
+      document.documentElement.classList.toggle('qm-drawing',on);
+      subtitle.textContent=on?'Drawing':(locked?'Reading view':'Editing');
+      if(on){expanded=false;input.blur();closePop();hideSelection();update();}
+      renderTouch();
+    });
 
     function update(){
       root.classList.toggle('qm-expanded',small.matches&&expanded&&!locked);

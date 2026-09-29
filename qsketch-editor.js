@@ -17,7 +17,7 @@
   const brushFields={size:[1,60],minSize:[.05,1],stabilizer:[0,1],streamline:[0,1],smoothing:[0,1],opacity:[.05,1],nibAngle:[0,180],curve:[-1,1]};
   const brushNames={ballpoint:'Ballpoint',fountain:'Fountain pen',calligraphy:'Calligraphy',marker:'Marker'};
   for(const value of Object.values(brushDefaults))Object.assign(value,{color:'#202530',pressure:true,curve:0});
-  const settingDefaults = () => ({brush:'fountain',brushes:structuredClone(brushDefaults),eraserSize:24,fingers:'auto',penButtonErase:true,lowLatency:false});
+  const settingDefaults = () => ({brush:'fountain',brushes:structuredClone(brushDefaults),eraserSize:24,fingers:'auto',penButtonErase:true,lowLatency:false,sound:true});
   const settingKey='qnote.qsketch.brush.v2',oldSettingKey='qnote.qsketch.brush.v1';
   function cleanBrush(input,base){
     if(!input||typeof input!=='object'||Array.isArray(input))return {...base};
@@ -33,7 +33,7 @@
       if(Object.hasOwn(brushDefaults,saved.brush))value.brush=saved.brush;
       if(typeof saved.eraserSize==='number'&&Number.isFinite(saved.eraserSize))value.eraserSize=Math.max(2,Math.min(80,saved.eraserSize));
       if(['auto','draw','navigate'].includes(saved.fingers))value.fingers=saved.fingers;
-      for(const key of ['penButtonErase','lowLatency'])if(typeof saved[key]==='boolean')value[key]=saved[key];
+      for(const key of ['penButtonErase','lowLatency','sound'])if(typeof saved[key]==='boolean')value[key]=saved[key];
       for(const key of Object.keys(brushDefaults)){
         const previous=stored?{}:{color:saved.color,pressure:saved.pressure,curve:saved.curve};
         value.brushes[key]=cleanBrush({...previous,...saved.brushes?.[key]},brushDefaults[key]);
@@ -55,6 +55,49 @@
     settings.brushes[id]=cleanBrush(preset.settings,brushDefaults[id]);settings.brush=id;persistSettings();
     if(bar)bar.querySelector('[data-brush]').value=id;
     refreshBrushControls();return id;
+  }
+  // ── ink sound ────────────────────────────────────────────────────────────
+  // A pen on paper, synthesised: looping grain noise through a band-pass
+  // filter whose level follows the nib's speed and pressure, and whose pitch
+  // is set by the tool (a ballpoint scratches high, a marker hushes low, the
+  // eraser rubs). Nothing is downloaded; Web Audio makes it on the fly.
+  const sound={ctx:null,grain:null,src:null,filter:null,gain:null,last:null,base:0};
+  const tones={ballpoint:[3400,1.2],fountain:[2500,.9],calligraphy:[1900,.8],marker:[1150,.6],erase:[760,.9]};
+  function soundStart(kind){
+    if(!settings.sound)return;
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+      sound.ctx ||= new AC();const ctx=sound.ctx;if(ctx.state==='suspended')ctx.resume();
+      if(!sound.grain){
+        // Two seconds of paper grain: white noise with a slow random walk
+        // mixed in, so the scratch has texture rather than hiss.
+        const len=ctx.sampleRate*2,buf=ctx.createBuffer(1,len,ctx.sampleRate),d=buf.getChannelData(0);let walk=0;
+        for(let i=0;i<len;i++){const w=Math.random()*2-1;walk=walk*.985+w*.15;d[i]=w*.55+walk*.9;}
+        sound.grain=buf;
+      }
+      soundStop(true);
+      const [freq,q]=tones[kind]||tones.fountain;
+      const src=ctx.createBufferSource();src.buffer=sound.grain;src.loop=true;
+      const filter=ctx.createBiquadFilter();filter.type='bandpass';filter.frequency.value=freq;filter.Q.value=q;
+      const gain=ctx.createGain();gain.gain.value=0;
+      src.connect(filter).connect(gain).connect(ctx.destination);src.start(0,Math.random()*1.5);
+      Object.assign(sound,{src,filter,gain,last:null,base:freq});
+    }catch{}
+  }
+  function soundMove(x,y,t,force){
+    if(!sound.gain)return;
+    const last=sound.last;sound.last={x,y,t};if(!last)return;
+    const dt=Math.max(1,t-last.t),speed=Math.hypot(x-last.x,y-last.y)/dt; // screen px per ms
+    const level=Math.min(1,speed/1.4)*(.35+.65*Math.max(0,Math.min(1,force||.5)));
+    const now=sound.ctx.currentTime;
+    sound.gain.gain.setTargetAtTime(level*.2,now,.02);
+    sound.filter.frequency.setTargetAtTime(sound.base*(.82+.36*Math.min(1,speed)),now,.04);
+  }
+  function soundStop(immediate=false){
+    if(!sound.src)return;
+    const {src,gain,ctx}=sound,now=ctx.currentTime;
+    try{gain.gain.cancelScheduledValues(now);gain.gain.setTargetAtTime(0,now,immediate?.004:.035);src.stop(now+(immediate?.03:.2));}catch{}
+    sound.src=sound.gain=sound.filter=null;sound.last=null;
   }
   const nib=()=>{const a=brush().nibAngle*Math.PI/180;return [Math.cos(a),-Math.sin(a)];};
   const refresh = () => window.dispatchEvent(new Event('resize'));
@@ -120,6 +163,13 @@
     else state(g.id,g.payload).then(()=>{refresh();if(active?.id===g.id)schedule();}).catch(report);
     return true;
   }
+  // While drawing, the text editor keeps no caret and no focus: no blinking
+  // cursor, no keys moving it, and no scroll back to it after each stroke.
+  function editorDrawingMode(on){
+    const node=document.getElementById('qnote-misc-action');
+    if(node){node.value=JSON.stringify({op:'drawing-mode',active:on});node.dispatchEvent(new Event('change',{bubbles:true}));}
+    if(on){for(const id of ['qnote-canvas','qm-input'])document.getElementById(id)?.blur();if(document.activeElement&&document.activeElement!==document.body&&!bar?.contains(document.activeElement))document.activeElement.blur?.();}
+  }
   function report(e){console.error(e);if(bar){const el=bar.querySelector('[data-status]');el.textContent=e.message;}}
   function send(){if(!active)return;const s=active,E=s.E,p=E.qs_save_ptr(),b=new Uint8Array(E.memory.buffer,p,E.qs_save_len());let binary='';for(let i=0;i<b.length;i+=8192)binary+=String.fromCharCode(...b.subarray(i,i+8192));s.meta.data=btoa(binary);s.payload='QSK1:'+JSON.stringify(s.meta);const node=document.getElementById('qnote-misc-action');node.value=JSON.stringify({op:'qsketch-save',id:s.id,payload:s.payload});node.dispatchEvent(new Event('change',{bubbles:true}));}
   function setPagePattern(value){
@@ -142,7 +192,7 @@
   }
   function updateSelection(){
     selection=selectBounds();
-    if(bar){bar.querySelector('[data-delete]').disabled=!selection;bar.querySelector('[data-duplicate]').disabled=!selection;}
+    if(bar)for(const key of ['delete','duplicate']){const b=bar.querySelector('[data-'+key+']');b.disabled=!selection;b.hidden=!selection;}
     schedule();
   }
   function selectionAction(action){
@@ -151,10 +201,59 @@
     if(action==='duplicate')active.E.qs_selection_duplicate(24/geometry.get(active.id).zoom,24/geometry.get(active.id).zoom);
     rebuild(active,true);send();updateSelection();
   }
+  // Toolbar: a floating pill of icon tools, like a note-taking app's pen tray.
+  const icon={
+    ballpoint:'<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>',
+    fountain:'<path d="M12 3l5.5 7.5L12 21 6.5 10.5z"/><path d="M12 10.5V15"/><circle cx="12" cy="10.5" r="1.2"/>',
+    calligraphy:'<path d="M5 20c2.5 0 4.5-1.5 5.5-4.5L18 6l-2-2-9.5 7.5C3.5 12.5 3 15 3 17z"/>',
+    marker:'<path d="M9 13l-4 4v3h3l4-4"/><path d="M14 4l6 6-7 7-6-6z"/>',
+    erase:'<path d="M7 20h13"/><path d="M4.5 15.5l9-9 5 5-8 8h-4z"/><path d="M9 11l5 5"/>',
+    lasso:'<path d="M12 4c4.4 0 8 2.5 8 5.8S16.4 15.6 12 15.6 4 13 4 9.8 7.6 4 12 4z" stroke-dasharray="3 2.4"/><path d="M8.5 15c-1.3 1.6-.8 4.4 1.8 4.8"/>',
+    undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+    redo:'<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
+    duplicate:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+    trash:'<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
+    settings:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+    finger:'<path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 10V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 10.5V7a1.5 1.5 0 0 1 3 0v7.5a6 6 0 0 1-6 6h-.8a6 6 0 0 1-5-2.7L4.3 14a1.5 1.5 0 0 1 2.4-1.8L9 14.5"/>',
+    soundOn:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18.3 6.5a8 8 0 0 1 0 11"/>',
+    soundOff:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>',
+    done:'<path d="M20 6 9 17l-5-5"/>',
+  };
+  const svg=name=>`<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon[name]}</svg>`;
+  const swatchColors=[['#202530','Black'],['#1d4ed8','Blue'],['#dc2626','Red'],['#15803d','Green'],['#f59e0b','Amber']];
+  function barStyles(){
+    if(document.getElementById('qnote-qsketch-style'))return;
+    const st=document.createElement('style');st.id='qnote-qsketch-style';st.textContent=`
+#qnote-qsketch-tools{--qs-accent:var(--q-theme-accent,#2563eb);--qs-line:var(--q-popup-border,#d8dee9);position:fixed;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));z-index:9000;
+  display:flex;align-items:center;gap:2px;width:max-content;max-width:calc(100vw - 16px);overflow-x:auto;scrollbar-width:none;padding:6px;border-radius:18px;box-sizing:border-box;
+  background:var(--q-theme-surface,#fff);color:var(--q-popup-ink,#172033);border:1px solid var(--qs-line);box-shadow:0 10px 32px #0000002e,0 2px 6px #0000001a;font:13px system-ui,-apple-system,'Segoe UI',sans-serif}
+#qnote-qsketch-tools::-webkit-scrollbar{display:none}
+.qm-phone #qnote-qsketch-tools,#qnote-qsketch-tools.qs-narrow{bottom:calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap;justify-content:center;row-gap:4px;width:calc(100vw - 16px);overflow:visible}
+.qm-phone #qnote-qsketch-tools .qs-sep{display:none}
+#qnote-qsketch-tools .qs-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;width:40px;height:40px;padding:0;border:0;border-radius:12px;background:transparent;color:inherit;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#qnote-qsketch-tools .qs-btn:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
+#qnote-qsketch-tools .qs-btn[aria-pressed=true]{background:color-mix(in srgb,var(--qs-accent) 22%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--qs-accent) 70%,transparent)}
+#qnote-qsketch-tools .qs-btn:disabled{opacity:.35;cursor:default}
+#qnote-qsketch-tools .qs-btn[hidden]{display:none}
+#qnote-qsketch-tools .qs-sep{flex:none;width:1px;height:24px;margin:0 4px;background:var(--qs-line)}
+#qnote-qsketch-tools .qs-swatch{flex:none;width:24px;height:24px;margin:0 2px;padding:0;border-radius:50%;border:0;cursor:pointer;box-shadow:inset 0 0 0 1px #00000026}
+#qnote-qsketch-tools .qs-swatch[aria-pressed=true]{box-shadow:0 0 0 2px var(--q-theme-surface,#fff),0 0 0 4px var(--qs-accent)}
+#qnote-qsketch-tools .qs-custom{position:relative;overflow:hidden;background:conic-gradient(#f43f5e,#f59e0b,#22c55e,#06b6d4,#6366f1,#d946ef,#f43f5e)}
+#qnote-qsketch-tools .qs-custom input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+#qnote-qsketch-tools .qs-size{flex:none;width:84px;margin:0 6px;accent-color:var(--qs-accent)}
+#qnote-qsketch-tools .qs-done{width:auto;padding:0 14px 0 10px;margin-left:4px;background:var(--qs-accent);color:#fff;font-weight:600}
+#qnote-qsketch-tools .qs-done:hover{background:color-mix(in srgb,var(--qs-accent) 88%,#000)}
+#qnote-qsketch-tools .qs-status{flex:none;padding:0 8px;color:#b42318;white-space:nowrap}
+#qnote-qsketch-tools .qs-status:empty{display:none}
+#qnote-qsketch-tools .qs-hidden{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+@media (max-width:600px){#qnote-qsketch-tools .qs-size{width:64px}}`;
+    document.head.appendChild(st);
+  }
   const controlStyle='min-height:34px;border:1px solid var(--q-popup-border,#ccd3df);border-radius:6px;background:var(--q-theme-surface,#fff);color:inherit;padding:4px 8px;font:inherit';
   function closeSettings(){panel?.remove();panel=null;bar?.querySelector('[data-settings]')?.setAttribute('aria-expanded','false');}
   function refreshBrushControls(){
     if(!bar)return;
+    queueMicrotask(()=>bar?.__sync?.());
     const tool=bar.querySelector('[data-brush]').value;
     bar.querySelector('[data-size]').value=tool==='erase'?settings.eraserSize:brush().size;
     if(panel){panel.querySelector('[data-current-brush]').textContent=brushNames[settings.brush]+(tool==='erase'?' (eraser active)':'');
@@ -167,7 +266,7 @@
         input.closest('label')?.querySelector('output')?.replaceChildren(document.createTextNode(settingLabel(key,value)));
       }
       panel.querySelector('[data-color]').value=brush().color;
-      panel.querySelector('[data-finger-note]').textContent=settings.fingers==='auto'?(penSeen?'Pen detected: palm movement is ignored; brief taps can undo. Choose Pan & zoom for deliberate navigation.':'Fingers draw until a pen is detected; then palm movement is ignored.'):settings.fingers==='draw'?'One finger draws when the pen is away; two fingers pan and zoom.':'Fingers pan and zoom when the pen is away.';
+      panel.querySelector('[data-finger-note]').textContent=settings.fingers==='auto'?(penSeen?'Pen detected: the pen draws, fingers scroll and zoom. Two-finger tap undoes, three redoes.':'Fingers draw until a pen is detected; then fingers scroll and the pen draws.'):settings.fingers==='draw'?'One finger draws when the pen is away; two fingers pan and zoom.':'Fingers pan and zoom when the pen is away.';
       drawPressureCurve();
     }
   }
@@ -260,53 +359,31 @@
     if(stroke?.lasso?.op==='lasso'&&stroke.lasso.points.length){c.save();c.beginPath();stroke.lasso.points.forEach(([x,y],i)=>{if(i)c.lineTo(g.x+x*z,g.y+y*z);else c.moveTo(g.x+x*z,g.y+y*z);});c.strokeStyle='#718aff';c.fillStyle='#718aff22';c.setLineDash([5,4]);c.stroke();c.fill();c.restore();}
     if(stroke?.lasso?.op==='move'&&selection){const p=stroke.lasso,dx=(p.last.x-p.start.x)*z,dy=(p.last.y-p.start.y)*z;c.save();c.strokeStyle='#718aff';c.setLineDash([5,4]);c.strokeRect(g.x+selection.minx*z+dx,g.y+selection.miny*z+dy,(selection.maxx-selection.minx)*z,(selection.maxy-selection.miny)*z);c.restore();}
   }
-  function schedule(){if(!frame)frame=requestAnimationFrame(()=>{frame=0;if(!active||!overlay)return;const g=geometry.get(active.id);if(!g)return;const r=g.canvas.getBoundingClientRect(),d=devicePixelRatio||1;Object.assign(overlay.style,{left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px'});const w=Math.round(r.width*d),h=Math.round(r.height*d);if(overlay.width!==w||overlay.height!==h){overlay.width=w;overlay.height=h;}const c=overlay.getContext('2d');c.setTransform(d,0,0,d,0,0);c.clearRect(0,0,r.width,r.height);const key=[g.x,g.y,g.w,g.h,g.zoom,w,h,active.revision,active.meta.paper].join(':');if(active.layerKey!==key){active.layerKey=key;active.layer ||= document.createElement('canvas');active.layer.width=w;active.layer.height=h;const b=active.layer.getContext('2d');b.setTransform(d,0,0,d,0,0);paint(b,g,active);}c.drawImage(active.layer,0,0,r.width,r.height);if(stroke&&!stroke.erase&&!stroke.lasso)paint(c,g,active,true,true);drawSelection(c,g);});}
-  const touches=new Map(),autoTaps=new Map(),suppressedTouches=new Set();
+  function schedule(){if(!frame)frame=requestAnimationFrame(()=>{frame=0;if(!active||!overlay)return;const g=geometry.get(active.id);if(!g)return;const r=g.canvas.getBoundingClientRect(),d=devicePixelRatio||1;Object.assign(overlay.style,{left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px'});
+    // Leave the editor's own scrollbar reachable: drawing never needs it.
+    {const sb=document.getElementById('qnote-scrollbar'),sr=sb?.getBoundingClientRect(),gap=sr&&sr.width>2&&getComputedStyle(sb).display!=='none'?Math.max(0,r.right-sr.left):0;overlay.style.clipPath=gap?`inset(0 ${gap}px 0 0)`:'';}const w=Math.round(r.width*d),h=Math.round(r.height*d);if(overlay.width!==w||overlay.height!==h){overlay.width=w;overlay.height=h;}const c=overlay.getContext('2d');c.setTransform(d,0,0,d,0,0);c.clearRect(0,0,r.width,r.height);const key=[g.x,g.y,g.w,g.h,g.zoom,w,h,active.revision,active.meta.paper].join(':');if(active.layerKey!==key){active.layerKey=key;active.layer ||= document.createElement('canvas');active.layer.width=w;active.layer.height=h;const b=active.layer.getContext('2d');b.setTransform(d,0,0,d,0,0);paint(b,g,active);}c.drawImage(active.layer,0,0,r.width,r.height);if(stroke&&!stroke.erase&&!stroke.lasso)paint(c,g,active,true,true);drawSelection(c,g);});}
+  const touches=new Map(),suppressedTouches=new Set();
   let gesture=null,navFrame=0,pendingNav=null,navEpoch=0;
-  let autoTapCount=0,autoTapStarted=0,autoTapMoved=false;
-  function autoTouch(e){
-    e.preventDefault();e.stopPropagation();
-    if(e.type==='pointerdown'){
-      if(!autoTaps.size){autoTapCount=0;autoTapStarted=performance.now();autoTapMoved=false;}
-      autoTaps.set(e.pointerId,{x:e.clientX,y:e.clientY});autoTapCount=Math.max(autoTapCount,autoTaps.size);
-      try{overlay.setPointerCapture(e.pointerId);}catch{}
-    }else if(e.type==='pointermove'){
-      const start=autoTaps.get(e.pointerId);
-      if(start&&Math.hypot(e.clientX-start.x,e.clientY-start.y)>12)autoTapMoved=true;
-    }else if(autoTaps.has(e.pointerId)){
-      autoTaps.delete(e.pointerId);
-      if(!autoTaps.size){
-        const tap=e.type==='pointerup'&&!autoTapMoved&&performance.now()-autoTapStarted<280;
-        if(tap&&autoTapCount===2)doUndo();
-        else if(tap&&autoTapCount>=3)doRedo();
-        else if(tap&&autoTapCount===1){
-          if(lastTap&&performance.now()-lastTap.time<300&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<32){lastTap=null;doUndo();}
-          else lastTap={x:e.clientX,y:e.clientY,time:performance.now()};
-        }
-        autoTapCount=0;
-      }
-    }
-    return true;
-  }
   function cancelTouchNavigation(){
     navEpoch++;pendingNav=null;
     if(gesture){const vertical=document.getElementById('qnote-scrollbar'),horizontal=document.getElementById('qnote-hscrollbar'),slider=document.getElementById('zoom-slider');
       if(vertical&&horizontal&&slider){slider.value=String(gesture.z);slider.dispatchEvent(new Event('input',{bubbles:true}));horizontal.scrollLeft=gesture.sx;vertical.scrollTop=gesture.sy;}}
     gesture=null;
     for(const id of touches.keys())suppressedTouches.add(id);
-    for(const id of autoTaps.keys())suppressedTouches.add(id);
     touches.clear();
-    autoTaps.clear();autoTapCount=0;
     if(stroke?.pointerType==='touch')finish(true);
   }
   function markPen(down=false){
     const first=!penSeen;
     penSeen=true;penDown=penDown||down;lastPenAt=performance.now();
     if(first)try{localStorage.setItem('qnote.qsketch.penDetected','1');}catch{}
-    if(touches.size||autoTaps.size||gesture||stroke?.pointerType==='touch')cancelTouchNavigation();
+    if(touches.size||gesture||stroke?.pointerType==='touch')cancelTouchNavigation();
     if(first)refreshBrushControls();
   }
   const penGuard=()=>penDown||performance.now()-lastPenAt<500;
+  // Fingers scroll and zoom once a pen has been seen (Automatic), or always
+  // (Pan & zoom). Taps keep their meaning: two fingers undo, three redo.
+  const fingersNavigate=()=>settings.fingers==='navigate'||(settings.fingers==='auto'&&penSeen);
   function doUndo(){if(!active)return;finish(true);if(active.E.qs_undo()){active.E.qs_select_clear();selection=null;rebuild(active,true);send();updateSelection();}}
   function doRedo(){if(!active)return;finish(true);if(active.E.qs_redo()){active.E.qs_select_clear();selection=null;rebuild(active,true);send();updateSelection();}}
   function touch(e){
@@ -323,11 +400,10 @@
       if(e.type==='pointerup'||e.type==='pointercancel')suppressedTouches.delete(e.pointerId);
       e.preventDefault();e.stopPropagation();return true;
     }
-    if(penSeen&&settings.fingers==='auto')return autoTouch(e);
     const vertical=document.getElementById('qnote-scrollbar'),horizontal=document.getElementById('qnote-hscrollbar'),slider=document.getElementById('zoom-slider');
     if(e.type==='pointerdown'){
       touches.set(e.pointerId,{x:e.clientX,y:e.clientY});try{overlay.setPointerCapture(e.pointerId);}catch{}
-      if(touches.size>=2||settings.fingers==='navigate'){finish(true);const a=[...touches.values()],x=a.reduce((n,p)=>n+p.x,0)/a.length,y=a.reduce((n,p)=>n+p.y,0)/a.length;gesture={x,y,sx:horizontal.scrollLeft,sy:vertical.scrollTop,z:Number(slider.value),d:a.length>1?Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y):0,start:performance.now(),count:a.length,moved:false};}
+      if(touches.size>=2||fingersNavigate()){finish(true);const a=[...touches.values()],x=a.reduce((n,p)=>n+p.x,0)/a.length,y=a.reduce((n,p)=>n+p.y,0)/a.length;gesture={x,y,sx:horizontal.scrollLeft,sy:vertical.scrollTop,z:Number(slider.value),d:a.length>1?Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y):0,start:performance.now(),count:a.length,moved:false};}
     }else if(e.type==='pointermove'){
       if(touches.has(e.pointerId))touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
       if(gesture){const a=[...touches.values()];if(a.length){const x=a.reduce((n,p)=>n+p.x,0)/a.length,y=a.reduce((n,p)=>n+p.y,0)/a.length;
@@ -359,13 +435,14 @@
     for(const v of (e.getCoalescedEvents?.().length?e.getCoalescedEvents():[e])){
       const p=point(v);
       if(stroke.lasso){const L=stroke.lasso;L.last=p;if(L.op==='lasso'){const q=L.points.at(-1);if(Math.hypot((p.x-q[0])*geometry.get(active.id).zoom,(p.y-q[1])*geometry.get(active.id).zoom)>3)L.points.push([p.x,p.y]);}}
-      else if(stroke.erase)active.E.qs_erase(p.x,p.y,settings.eraserSize/geometry.get(active.id).zoom);
-      else {stroke.distance=Math.max(stroke.distance||0,Math.hypot(p.x-stroke.start.x,p.y-stroke.start.y)*geometry.get(active.id).zoom);active.E.qs_add_point(p.x,p.y,v.pointerType==='pen'&&stroke.brush.pressure?pressure(v.pressure,stroke.brush):1,v.timeStamp);
+      else if(stroke.erase){active.E.qs_erase(p.x,p.y,settings.eraserSize/geometry.get(active.id).zoom);soundMove(v.clientX,v.clientY,v.timeStamp,.6);}
+      else {soundMove(v.clientX,v.clientY,v.timeStamp,v.pointerType==='pen'?v.pressure:.55);stroke.distance=Math.max(stroke.distance||0,Math.hypot(p.x-stroke.start.x,p.y-stroke.start.y)*geometry.get(active.id).zoom);active.E.qs_add_point(p.x,p.y,v.pointerType==='pen'&&stroke.brush.pressure?pressure(v.pressure,stroke.brush):1,v.timeStamp);
         if(v.pointerType==='pen'&&panel){panel.querySelector('[data-pressure-now]').textContent=Math.round(v.pressure*100)+'%';panel.querySelector('[data-pressure-bar]').value=v.pressure;}}
     }
     if(stroke.erase)rebuild(active);schedule();
   }
   function finish(cancel=false){
+    soundStop();
     if(!stroke)return;
     if(stroke.lasso){
       const L=stroke.lasso;stroke=null;
@@ -393,32 +470,67 @@
     const changed=!cancel||stroke.erase;stroke=null;rebuild(active);if(changed)send();schedule();
   }
   function close(discard=false){
-    session++;navEpoch++;pendingNav=null;touches.clear();autoTaps.clear();suppressedTouches.clear();gesture=null;penDown=false;closeSettings();
+    session++;navEpoch++;pendingNav=null;touches.clear();suppressedTouches.clear();soundStop(true);gesture=null;penDown=false;closeSettings();
     if(pendingTap){clearTimeout(pendingTap.timer);if(active){if(discard)active.E.qs_cancel_stroke();else {active.E.qs_commit_stroke();rebuild(active);send();}}pendingTap=null;}
     if(discard&&stroke){if(stroke.erase)active.E.qs_erase_end();else if(!stroke.lasso)active.E.qs_cancel_stroke();stroke=null;}else finish();
-    if(active){active.E=null;active.layer=null;active.layerKey=null;}active=null;selection=null;overlay?.remove();bar?.remove();overlay=bar=null;refresh();
+    const wasOpen=!!bar;
+    if(active){if(discard){active.keptE=null;}else{active.keptE=active.E;active.keptPayload=active.payload;}active.E=null;active.layer=null;active.layerKey=null;}active=null;selection=null;overlay?.remove();bar?.remove();overlay=bar=null;refresh();
+    if(wasOpen){editorDrawingMode(false);window.dispatchEvent(new CustomEvent('qnote-drawing',{detail:{active:false}}));}
   }
   async function open(data){
     if(active?.id===data.id){close();return;}close();const ticket=session;
-    try{const selected=await state(data.id,data.payload),E=await instance();if(ticket!==session)return;active=selected;active.E=E;load(active.E,active.meta);if(!geometry.has(data.id)){refresh();await new Promise(r=>setTimeout(r,80));}const g=geometry.get(data.id);if(!g)throw Error('The drawing container is not visible');
+    try{const selected=await state(data.id,data.payload);
+      // Reopening the same drawing reuses its engine, so undo still reaches
+      // strokes from before it was closed.
+      const reuse=!!selected.keptE&&selected.keptPayload===selected.payload;
+      const E=reuse?selected.keptE:await instance();if(ticket!==session)return;active=selected;active.E=E;if(!reuse)load(active.E,active.meta);if(!geometry.has(data.id)){refresh();await new Promise(r=>setTimeout(r,80));}const g=geometry.get(data.id);if(!g)throw Error('The drawing container is not visible');
       active.meta.width ||= g.w/g.zoom;active.meta.height ||= g.h/g.zoom;
       document.getElementById('qm-input')?.blur();
-      bar=document.createElement('section');bar.id='qnote-qsketch-tools';bar.setAttribute('aria-label','Drawing tools');
-      bar.style.cssText='position:fixed;bottom:64px;left:50%;transform:translateX(-50%);z-index:9000;display:flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:calc(100vw - 24px);width:max-content;padding:10px;background:var(--q-theme-surface,#fff);color:var(--q-popup-ink,#172033);border:1px solid #ccd3df;border-radius:12px;box-shadow:0 4px 20px #0003;font:14px system-ui';
-      bar.innerHTML='<strong data-status></strong><select aria-label="Brush" data-brush><option value="ballpoint">Ballpoint</option><option value="fountain">Fountain pen</option><option value="calligraphy">Calligraphy</option><option value="marker">Marker</option><option value="erase">Eraser</option></select><button data-lasso aria-pressed="false">Lasso</button><button data-settings aria-expanded="false" aria-haspopup="dialog">Brush settings</button><input type="range" min="1" max="60" value="5" aria-label="Brush size" data-size style="width:75px"><button data-undo>Undo</button><button data-redo>Redo</button><button data-duplicate disabled>Duplicate</button><button data-delete disabled>Delete</button><button data-done>Done</button>';
-      for(const control of bar.querySelectorAll('button,select'))control.style.cssText+=';'+controlStyle;
-      bar.querySelector('[data-status]').textContent=data.id<0?'Drawing Mode':'Anchored sketch';
-      const brushSelect=bar.querySelector('[data-brush]');brushSelect.value=settings.brush;refreshBrushControls();
-      brushSelect.onchange=()=>{if(brushSelect.value!=='erase')settings.brush=brushSelect.value;persistSettings();bar.querySelector('[data-lasso]').setAttribute('aria-pressed','false');active.E.qs_select_clear();selection=null;updateSelection();refreshBrushControls();};
+      barStyles();
+      bar=document.createElement('section');bar.id='qnote-qsketch-tools';bar.setAttribute('aria-label',data.id<0?'Drawing tools':'Sketch tools');
+      const tool=(name,label,extra='')=>`<button type="button" class="qs-btn" ${extra} title="${label}" aria-label="${label}">${svg(name)}</button>`;
+      bar.innerHTML=
+        `<select class="qs-hidden" aria-label="Brush" data-brush tabindex="-1"><option value="ballpoint">Ballpoint</option><option value="fountain">Fountain pen</option><option value="calligraphy">Calligraphy</option><option value="marker">Marker</option><option value="erase">Eraser</option></select>`+
+        tool('ballpoint','Ballpoint','data-tool="ballpoint"')+tool('fountain','Fountain pen','data-tool="fountain"')+tool('calligraphy','Calligraphy','data-tool="calligraphy"')+tool('marker','Marker','data-tool="marker"')+
+        tool('erase','Eraser','data-tool="erase"')+tool('lasso','Lasso select','data-lasso aria-pressed="false"')+
+        `<span class="qs-sep"></span>`+swatchColors.map(([c,n])=>`<button type="button" class="qs-swatch" data-swatch="${c}" style="background:${c}" title="${n}" aria-label="${n} ink"></button>`).join('')+
+        `<label class="qs-swatch qs-custom" title="Custom color"><input type="color" data-custom-color aria-label="Custom ink color"></label>`+
+        `<input class="qs-size" type="range" min="1" max="60" value="5" aria-label="Brush size" data-size>`+
+        `<span class="qs-sep"></span>`+tool('undo','Undo','data-undo')+tool('redo','Redo','data-redo')+tool('duplicate','Duplicate selection','data-duplicate disabled hidden')+tool('trash','Delete selection','data-delete disabled hidden')+
+        `<span class="qs-sep"></span>`+tool('finger','Draw with finger','data-finger aria-pressed="false"')+tool('soundOn','Ink sounds','data-sound aria-pressed="true"')+tool('settings','Brush settings','data-settings aria-expanded="false" aria-haspopup="dialog"')+
+        `<span class="qs-status" data-status role="status"></span>`+
+        `<button type="button" class="qs-btn qs-done" data-done title="Done" aria-label="Done drawing">${svg('done')}<span>Done</span></button>`;
+      const brushSelect=bar.querySelector('[data-brush]');brushSelect.value=settings.brush;
+      const lassoButton=bar.querySelector('[data-lasso]');
+      // Pressed states follow the tool, the ink colour and the two toggles.
+      const syncBar=()=>{
+        const lasso=lassoButton.getAttribute('aria-pressed')==='true';
+        for(const b of bar.querySelectorAll('[data-tool]'))b.setAttribute('aria-pressed',String(!lasso&&b.dataset.tool===brushSelect.value));
+        const color=brush().color.toLowerCase();let preset=false;
+        for(const b of bar.querySelectorAll('[data-swatch]')){const on=b.dataset.swatch===color;preset||=on;b.setAttribute('aria-pressed',String(on));}
+        const custom=bar.querySelector('.qs-custom');custom.setAttribute('aria-pressed',String(!preset));bar.querySelector('[data-custom-color]').value=color;
+        const fingerDraws=!fingersNavigate();const finger=bar.querySelector('[data-finger]');
+        finger.setAttribute('aria-pressed',String(fingerDraws));finger.title=fingerDraws?'Fingers draw (tap to scroll with fingers instead)':'Fingers scroll and zoom (tap to draw with fingers)';
+        const soundBtn=bar.querySelector('[data-sound]');soundBtn.setAttribute('aria-pressed',String(!!settings.sound));soundBtn.innerHTML=svg(settings.sound?'soundOn':'soundOff');
+        soundBtn.title=settings.sound?'Ink sounds on':'Ink sounds off';soundBtn.setAttribute('aria-label',soundBtn.title);
+      };
+      bar.__sync=syncBar;refreshBrushControls();
+      brushSelect.onchange=()=>{if(brushSelect.value!=='erase')settings.brush=brushSelect.value;persistSettings();lassoButton.setAttribute('aria-pressed','false');active.E.qs_select_clear();selection=null;updateSelection();refreshBrushControls();syncBar();};
+      for(const b of bar.querySelectorAll('[data-tool]'))b.onclick=()=>{brushSelect.value=b.dataset.tool;brushSelect.dispatchEvent(new Event('change'));};
+      const setInk=color=>{if(brushSelect.value==='erase'){brushSelect.value=settings.brush;brushSelect.dispatchEvent(new Event('change'));}brush().color=color;persistSettings();refreshBrushControls();syncBar();};
+      for(const b of bar.querySelectorAll('[data-swatch]'))b.onclick=()=>setInk(b.dataset.swatch);
+      bar.querySelector('[data-custom-color]').oninput=e=>setInk(e.target.value);
       bar.querySelector('[data-size]').oninput=e=>{if(brushSelect.value==='erase')settings.eraserSize=Number(e.target.value);else brush().size=Number(e.target.value);persistSettings();refreshBrushControls();};
       bar.querySelector('[data-settings]').onclick=openSettings;
-      bar.querySelector('[data-lasso]').onclick=e=>{const on=e.currentTarget.getAttribute('aria-pressed')!=='true';e.currentTarget.setAttribute('aria-pressed',String(on));e.currentTarget.style.background=on?'var(--q-theme-selected,#dce6ff)':'var(--q-theme-surface,#fff)';if(!on){active.E.qs_select_clear();selection=null;updateSelection();}};
+      lassoButton.onclick=()=>{const on=lassoButton.getAttribute('aria-pressed')!=='true';lassoButton.setAttribute('aria-pressed',String(on));if(!on){active.E.qs_select_clear();selection=null;updateSelection();}syncBar();};
+      bar.querySelector('[data-finger]').onclick=()=>{settings.fingers=fingersNavigate()?'draw':'navigate';persistSettings();refreshBrushControls();syncBar();};
+      bar.querySelector('[data-sound]').onclick=()=>{settings.sound=!settings.sound;if(!settings.sound)soundStop(true);persistSettings();syncBar();};
       bar.querySelector('[data-undo]').onclick=doUndo;bar.querySelector('[data-redo]').onclick=doRedo;
       bar.querySelector('[data-delete]').onclick=()=>selectionAction('delete');bar.querySelector('[data-duplicate]').onclick=()=>selectionAction('duplicate');bar.querySelector('[data-done]').onclick=()=>close();
       overlay=document.createElement('canvas');overlay.id='qnote-qsketch-canvas';overlay.style.cssText='position:fixed;z-index:100;touch-action:none;cursor:crosshair';overlay.getContext('2d',{desynchronized:settings.lowLatency});
       overlay.onpointerdown=e=>{
         if(e.pointerType==='pen')markPen(true);
-        if(e.pointerType==='touch'&&(penGuard()||(penSeen&&settings.fingers==='auto')||Math.max(e.width||0,e.height||0)>28)){touch(e);return;}
+        if(e.pointerType==='touch'&&(penGuard()||fingersNavigate()||Math.max(e.width||0,e.height||0)>28)){touch(e);return;}
         if(e.pointerType==='touch'&&lastTap&&performance.now()-lastTap.time<300&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<32){e.preventDefault();lastTap=null;if(pendingTap){clearTimeout(pendingTap.timer);active.E.qs_cancel_stroke();pendingTap=null;}doUndo();return;}
         if(pendingTap){clearTimeout(pendingTap.timer);active.E.qs_commit_stroke();pendingTap=null;rebuild(active);send();}
         if(touch(e))return;if(stroke)return;
@@ -427,6 +539,7 @@
         if(bar.querySelector('[data-lasso]').getAttribute('aria-pressed')==='true'){startLasso(e);return;}
         const tool=brushSelect.value,b={...brush()},hex=b.color;
         stroke={pointer:e.pointerId,pointerType:e.pointerType,startTime:performance.now(),start:p,clientX:e.clientX,clientY:e.clientY,brush:b,erase:tool==='erase'||(settings.penButtonErase&&e.pointerType==='pen'&&(e.button===5||(e.buttons&32)!==0)),color:rgba((parseInt(hex.slice(1),16)*256+Math.round(b.opacity*255))>>>0)};
+        soundStart(stroke.erase?'erase':tool);
         if(stroke.erase)active.E.qs_erase_begin();
         else {const [nx,ny]=nib();active.E.qs_begin_stroke((parseInt(hex.slice(1),16)*256+Math.round(b.opacity*255))>>>0,b.size,b.pressure?b.minSize:1,b.smoothing*3,b.streamline,tool==='calligraphy'?1:0,nx,ny,.15,b.stabilizer*80/geometry.get(active.id).zoom);}
         feed(e);
@@ -437,9 +550,12 @@
       overlay.onwheel=e=>{e.preventDefault();if(penGuard())return;const g=geometry.get(active.id);g.canvas.dispatchEvent(new WheelEvent('wheel',{deltaX:e.deltaX,deltaY:e.deltaY,ctrlKey:e.ctrlKey,bubbles:true,clientX:e.clientX,clientY:e.clientY}));};
       overlay.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
       document.body.append(overlay,bar);schedule();refresh();
+      editorDrawingMode(true);
+      window.dispatchEvent(new CustomEvent('qnote-drawing',{detail:{active:true,id:data.id}}));
     }catch(e){close();console.error(e);alert(e.message);}
   }
   window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);window.addEventListener('keydown',e=>{if(!active)return;if(e.target.closest?.('input,select,textarea')&&e.key!=='Escape')return;if(e.key==='Escape'){e.preventDefault();if(panel)closeSettings();else if(selection){active.E.qs_select_clear();updateSelection();}else close();}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();if(e.shiftKey)doRedo();else doUndo();}else if((e.key==='Delete'||e.key==='Backspace')&&selection){e.preventDefault();selectionAction('delete');}});
+  document.addEventListener('focusin',e=>{if(active&&(e.target.id==='qnote-canvas'||e.target.id==='qm-input'))e.target.blur();},true);
   document.addEventListener('change',e=>{if(e.target.id==='qnote-file-buffer'){close(true);states.clear();geometry.clear();}},true);
   document.addEventListener('click',e=>{if(active&&e.target.closest('#btn-print'))close();},true);
   window.QNoteSketch={open,draw,close,payload:(id,text)=>payloads.set(id,text),setPagePattern,setPageSettings,get pageSettings(){return decode(payloads.get(-1)||'').pageSettings;},get pagePattern(){return Number(decode(payloads.get(-1)||'').paper)||0;},get selectionCount(){return active?.E?.qs_selection_count()||0;},get target(){if(!active)return null;const g=geometry.get(active.id);return g?{id:g.id,x:g.x,y:g.y,width:g.w,height:g.h,zoom:g.zoom}:null;}};
