@@ -52,7 +52,7 @@
    */
   async function pageDocument(relPath, inject = '') {
     const url = BASE + relPath;
-    if (!pages.has(url)) pages.set(url, fetch(url, {mode: 'cors', cache: 'default'}).then((res) => {
+    if (!pages.has(url)) pages.set(url, fetch(url, {mode: 'cors', cache: 'no-cache'}).then((res) => {
       if (!res.ok) throw new Error('QOQORO: could not load ' + url + ' (' + res.status + ')');
       return res.text();
     }));

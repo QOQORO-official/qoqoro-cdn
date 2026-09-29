@@ -73,7 +73,9 @@ class VaultClient {
   /** A package page as srcdoc HTML, for nested frames (the workspace's editor). Same rewrite as qoqoro.js. */
   static async frameDocument(relPath, inject = '') {
     const url = new URL(relPath, VaultClient.packageBase).href;
-    const res = await fetch(url, {mode: 'cors'});
+    // Revalidate: the page names this build's scripts (?v=<build>), and a
+    // stale page from the browser cache would keep loading old ones.
+    const res = await fetch(url, {mode: 'cors', cache: 'no-cache'});
     if (!res.ok) throw new VaultError(res.status, 'Could not load ' + relPath);
     const dir = new URL('.', url).href, origin = new URL(url).origin;
     let html = await res.text();

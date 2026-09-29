@@ -58,4 +58,4 @@
     const show = () => { const p=document.createElement('p');p.setAttribute('role','alert');p.textContent='Unable to load protected resources: '+error.message;document.body.prepend(p); };
     if(document.body)show();else document.addEventListener('DOMContentLoaded',show,{once:true});
   });
-})({"key":"zcuzhf//3iI3Xgm9U160rzrU1XXgNHKhykJnKLL1xHc=","paths":["docx.wasm","qnote/app.wasm","qnote/auxiliary.wasm","qnote/layout.wasm","qnote/nim-runtime/decoder.wasm","qnote/nim-runtime/runtime.bin","qnote/qsketch/qsketch.wasm","qnote/vendor/luau/luau-web.js","qochart/js/qgraph.wasm","recto/app.wasm","stylus/stylus.wasm"],"digest":"d90a47bc6f4884cb53bd73708ffd56f2f5fb919185692a77d66372c10b10b457"});
+})({"key":"FHIiHuR9cWokDI/IVZVKuavb+Nk8pRwvgdR4mYP/eHY=","paths":["docx.wasm","qnote/app.wasm","qnote/auxiliary.wasm","qnote/layout.wasm","qnote/nim-runtime/decoder.wasm","qnote/nim-runtime/runtime.bin","qnote/qsketch/qsketch.wasm","qnote/vendor/luau/luau-web.js","qochart/js/qgraph.wasm","recto/app.wasm","stylus/stylus.wasm"],"digest":"31a851cffc4846820ed00ef0fe864cfb8ef31e842462c631df1be5b491fa5c7c"});
