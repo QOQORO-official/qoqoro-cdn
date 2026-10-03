@@ -350,6 +350,16 @@ function render() {
       details.open = openFolders.has(value7) || !!value;
       const summary = document.createElement("summary");
       summary.className = "folder-row";
+      summary.title = value7;
+      summary.draggable = true;
+      summary.ondragstart = event => {
+        event.stopPropagation();
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('application/x-qnote-vault-path', value7);
+        event.dataTransfer.setData('text/plain', value7);
+        summary.classList.add('dragging');
+      };
+      summary.ondragend = () => summary.classList.remove('dragging');
       const span = document.createElement("span");
       span.className = "file-icon";
       span.classList.add('folder-chevron'); span.append(vaultIcon('chevron'));
@@ -749,6 +759,9 @@ function showContext(value, path, value2 = "file") {
   if (value2 === "folder") value5.push(["Expand / collapse", async () => {
     if (openFolders.has(path)) openFolders.delete(path);else openFolders.add(path);
     render();
+  }], ["Rename / move folder", async () => {
+    const target = prompt('New vault-relative folder path', path);
+    if (target && target !== path) await moveVaultPath(path, target);
   }]);
   if (value2 === "root") value5.push(["Collapse all folders", async () => {
     openFolders.clear();
@@ -778,15 +791,7 @@ function showContext(value, path, value2 = "file") {
   }], ["Rename / move", async () => {
     const value6 = prompt("New vault-relative path", path);
     if (!value6 || value6 === path) return;
-    if (current === path) await save();
-    if (chart.path === path) await chart.save();
-    await vault.move(path, value6);
-    if (chart.path === path) chart.path = value6;
-    if (current === path) {
-      current = value6;
-      document.querySelector("#currentNote").textContent = value6;
-    }
-    await refresh();
+    await moveVaultPath(path, value6);
   }], ["Move to Trash", async () => {
     if (!confirm("Move " + path + " to recoverable vault trash?")) return;
     await vault.remove(path);
@@ -976,21 +981,41 @@ async function moveVaultFile(source, destination) {
     say(source + ' is already in this folder');
     return;
   }
-  if (files.some(file => file.path.toLowerCase() === target.toLowerCase()))
-    throw Error('A file named ' + name + ' already exists in ' + (destination || 'the vault root'));
+  await moveVaultPath(source, target);
+}
+
+installFolderDrop(document.querySelector('#vaultRoot'), '');
+
+async function moveVaultPath(source, target) {
+  target = target.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const isFolder = folders.some(folder => folder.path === source);
+  const contains = path => path === source || (isFolder && path.startsWith(source + '/'));
+  const remap = path => contains(path) ? target + path.slice(source.length) : path;
+  if (!target || target.split('/').some(part => !part || part === '.' || part === '..'))
+    throw Error('Enter a valid vault-relative path');
+  if (target.toLowerCase() === source.toLowerCase()) return;
+  if (isFolder && target.toLowerCase().startsWith(source.toLowerCase() + '/'))
+    throw Error('A folder cannot be moved inside itself');
+  if ([...files, ...folders].some(item => item.path.toLowerCase() === target.toLowerCase()))
+    throw Error('The destination already exists: ' + target);
   await pdfFrame.contentWindow?.__rectoHost?.flush();
-  if (current === source) await save();
-  if (chart.path === source) await chart.save();
+  if (current && contains(current)) await save();
+  if (chart.path && contains(chart.path)) await chart.save();
   await vault.move(source, target);
-  if (chart.path === source) chart.path = target;
-  if (current === source) {
-    current = target;
-    document.querySelector('#currentNote').textContent = target;
-  }
+  current = remap(current);
+  chart.path = remap(chart.path);
+  pdfPath = remap(pdfPath);
+  selectedFolder = remap(selectedFolder);
+  const expanded = [...openFolders].map(remap);
+  openFolders.clear();
+  for (const path of expanded) openFolders.add(path);
+  const destination = target.split('/').slice(0, -1).join('/');
   if (destination) openFolders.add(destination);
-  selectedFolder = destination;
+  if (!isFolder) selectedFolder = destination;
+  rememberFolders();
+  if (activePath()) document.querySelector('#currentNote').textContent = activePath();
   await refresh();
-  say('Moved ' + name + ' to ' + (destination || 'vault root'));
+  say('Moved ' + source.split('/').pop() + ' to ' + (destination || 'vault root'));
 }
 window.addEventListener("message", event => {
   if (event.origin === location.origin && event.source === pdfFrame.contentWindow && event.data?.type === "VAULT_FILES_CHANGED") void run(refresh);
