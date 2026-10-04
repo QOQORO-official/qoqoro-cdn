@@ -3,17 +3,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src blob: 'self' blob: 'wasm-unsafe-eval' 'sha256-Q6vhXyR3iVIZdKPVu634S5KldJKCxS7wEFSQtJXGR70=' 'sha256-31b3+VoYX8H80U6LLzNAsYqxovg18Ashw5JPXfacH5M=' 'sha256-FHMlSoPgSOEcDcWmkaUl70K/oXolNEE0kRLGqHCBhAE='; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' blob: https: http:; worker-src 'self' blob:; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src blob: 'self' blob: 'wasm-unsafe-eval' 'sha256-Q6vhXyR3iVIZdKPVu634S5KldJKCxS7wEFSQtJXGR70=' 'sha256-oiBKvb2RuMk1wfRb1rQWsVl6/0EtgYd4hIgowu8p8mE=' 'sha256-IZ2BeTkeeO3Lm+KrT1yECfSN1Sxl5pxRnJKy3LmNTw8='; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' blob: https: http:; worker-src 'self' blob:; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>QNote · Nim WebAssembly</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ctext x='6' y='24' fill='white' font-size='24'%3EQ%3C/text%3E%3C/svg%3E">
 
-<script src="../protected-resources.js?v=de5715cc58aa"></script>
+<script src="../protected-resources.js?v=e45290461a73"></script>
 <script>globalThis.__QNOTE_NATIVE_MATH_ONLY__ = true;</script>
-<link rel="stylesheet" href="nim-runtime/native-math.css?v=d5780cf3916cd656">
+<link rel="stylesheet" href="nim-runtime/native-math.css?v=0ae2077be3feed90">
 
 
-<link rel="stylesheet" href="nim-runtime/math-editor.css?v=d5780cf3916cd656">
+<link rel="stylesheet" href="nim-runtime/math-editor.css?v=0ae2077be3feed90">
 
 
 <style>
@@ -29,6 +29,7 @@
   #nim-console:empty { display: none; }
   #nim-console .stderr { color: #c07a7a; }
 </style>
+<link rel="stylesheet" href="../qnote-mobile-sizing.css?v=e45290461a73">
 </head>
 <body>
 <div id="app"></div>
@@ -37,13 +38,13 @@
      rewrites quoted file references in THIS document to blob: URLs, so the
      boot script picks up the rewritten URL via the global. On real static
      hosting the plain relative path is served as-is. -->
-<script>window.__APP_WASM_URL__ = "app.wasm?v=d5780cf3916cd656";</script>
+<script>window.__APP_WASM_URL__ = "app.wasm?v=0ae2077be3feed90";</script>
 
 
 
 
 
 
-<script src="nim-runtime/loader.js?v=d5780cf3916cd656"></script>
+<script src="nim-runtime/loader.js?v=0ae2077be3feed90"></script>
 </body>
 </html>
