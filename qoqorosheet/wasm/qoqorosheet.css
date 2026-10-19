@@ -1,0 +1,74 @@
+html, body.qs-body { height: 100%; margin: 0; overflow: hidden; background: #ffffff;
+  font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; color: #1f2937; }
+.qs-app { display: flex; flex-direction: column; height: 100%; }
+
+.qs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px 8px;
+  border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
+.qs-btn { min-width: 28px; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: #1f2937; font: inherit; cursor: pointer; }
+.qs-btn:hover { background: #e8eef7; border-color: #d4dbe6; }
+.qs-sep { width: 1px; height: 20px; margin: 0 4px; background: #d8dee6; }
+.qs-select { height: 28px; border: 1px solid #d4dbe6; border-radius: 5px; background: #fff; font: inherit; padding: 0 4px; }
+.qs-color { position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 28px; border-radius: 5px; cursor: pointer; font-weight: 600; }
+.qs-color:hover { background: #e8eef7; }
+.qs-color input { position: absolute; left: 3px; right: 3px; bottom: 2px; width: auto; height: 5px; padding: 0;
+  border: 0; cursor: pointer; }
+.qs-color input::-webkit-color-swatch-wrapper { padding: 0; }
+.qs-color input::-webkit-color-swatch { border: 0; }
+
+.qs-formula { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-bottom: 1px solid #e5e7eb; }
+.qs-name { min-width: 84px; padding: 3px 6px; border-right: 1px solid #e5e7eb; font: 12px ui-monospace, Consolas, monospace; color: #374151; }
+.qs-fx-label { color: #9ca3af; font-style: italic; }
+.qs-fx { flex: 1; min-width: 0; height: 24px; border: 0; outline: none; font: 13px ui-monospace, Consolas, monospace; }
+
+.qs-grid { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.qs-canvas { position: absolute; left: 0; top: 0; }
+.qs-scroll { position: absolute; inset: 0; overflow: auto; cursor: cell; touch-action: none; }
+.qs-spacer { width: 1px; height: 1px; }
+.qs-editor { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; resize: none;
+  padding: 2px 3px; margin: 0; border: 2px solid #1a73e8; outline: none; box-sizing: border-box;
+  background: #fff; overflow: hidden; white-space: pre; z-index: 3; }
+.qs-editor.editing { opacity: 1; width: auto; min-height: 21px; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
+
+.qs-tabs { display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 8px; border-top: 1px solid #e5e7eb;
+  background: #f8fafc; overflow-x: auto; }
+.qs-tab { height: 26px; padding: 0 14px; border: 1px solid transparent; border-radius: 5px 5px 0 0; background: transparent;
+  font: inherit; color: #4b5563; cursor: pointer; white-space: nowrap; }
+.qs-tab.active { background: #fff; border-color: #e5e7eb; border-top: 2px solid #1a73e8; color: #1a73e8; font-weight: 600; }
+
+/* Charts (ECharts), floating over the grid and anchored to a cell. */
+.qs-chart { position: absolute; z-index: 2; background: #fff; border: 1px solid #d4dbe6; border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(15,23,42,.12); display: flex; flex-direction: column; }
+.qs-chart-bar { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; cursor: move;
+  border-bottom: 1px solid #eef1f5; font-size: 12px; color: #4b5563; user-select: none; }
+.qs-chart-bar span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-chart-bar button { border: 0; background: none; cursor: pointer; font-size: 14px; color: #6b7280; }
+.qs-chart-body { flex: 1; min-height: 0; }
+
+/* Luau program panel */
+.qs-program { position: fixed; right: 16px; bottom: 48px; width: min(560px, calc(100vw - 32px)); height: min(520px, calc(100vh - 120px));
+  z-index: 10; display: flex; flex-direction: column; background: #1e1e2e; color: #e5e7eb; border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden; }
+.qs-program[hidden] { display: none; }
+.qs-program-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #181825; }
+.qs-program-head strong { flex: 1; font-size: 13px; }
+.qs-program-head select, .qs-program-head button { height: 26px; border-radius: 5px; border: 1px solid #45475a;
+  background: #313244; color: #e5e7eb; font: inherit; padding: 0 8px; cursor: pointer; }
+.qs-program-head button.run { background: #1a73e8; border-color: #1a73e8; }
+.qs-program textarea { flex: 2; min-height: 0; resize: none; border: 0; outline: none; padding: 8px 10px;
+  background: #1e1e2e; color: #cdd6f4; font: 12.5px/1.5 ui-monospace, Consolas, monospace; tab-size: 4; }
+.qs-program-out { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 6px 10px; border-top: 1px solid #313244;
+  background: #11111b; font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+.qs-program-out .warn { color: #f9e2af; } .qs-program-out .error { color: #f38ba8; } .qs-program-out .ok { color: #a6e3a1; }
+
+.qs-toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 20; padding: 8px 14px;
+  border-radius: 6px; background: #1f2937; color: #fff; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+
+.qs-chart-settings { position: absolute; right: 6px; top: 28px; z-index: 3; display: grid; gap: 6px; width: 220px; padding: 10px;
+  background: #fff; border: 1px solid #d4dbe6; border-radius: 6px; box-shadow: 0 6px 18px rgba(15,23,42,.18); font-size: 12px; }
+.qs-chart-settings label { display: grid; gap: 2px; color: #4b5563; }
+.qs-chart-settings label.row { display: flex; align-items: center; gap: 6px; }
+.qs-chart-settings input:not([type]) { height: 24px; border: 1px solid #d4dbe6; border-radius: 4px; padding: 0 6px; font: inherit; }
+.qs-chart-settings .buttons { display: flex; gap: 6px; justify-content: flex-end; }
+.qs-chart-settings button, .qs-chart-bar button { font: inherit; }
