@@ -53,7 +53,8 @@ device.
 | `mode` | What you get | Server needed? |
 |---|---|---|
 | `editor` | The word processor on its own | No. Save downloads a `.qnote`; you can read the document from JavaScript |
-| `workspace` | The whole app: file tree, folders, login, editor, whiteboard, PDF viewer, diagrams | Yes, a QNote Vault server |
+| `workspace` | The whole app: file tree, folders, login, editor, whiteboard, PDF viewer, diagrams, spreadsheets | Yes, a QNote Vault server |
+| `sheet` | Only the spreadsheet (QoqoroSheet, with Luau programs): no file list, no app switcher | Yes, a QNote Vault server |
 
 ### Editor
 
@@ -84,6 +85,22 @@ The workspace signs in to the server, lists its notes and folders, and opens
 notes, whiteboards, PDFs and diagrams. The server is anything that speaks the
 small QNote Vault HTTP API: notes, folders, uploads, login.
 
+### Spreadsheet only
+
+```js
+const sheet = QOQORO.mount('#sheet', {
+  mode: 'sheet',
+  server: 'https://notes.example.com',
+  path: 'data/gas.xlsx',          // a .xlsx, .xls or .csv in the vault
+});
+sheet.open('data/other.csv');     // open another file
+sheet.save();                     // write it back to the vault
+```
+
+The spreadsheet app itself is served by the server at `/qoqorosheet/`. It signs
+in like the workspace. The server must list your site's origin in
+`QNOTE_CORS_ORIGINS`.
+
 ## Automation with Luau
 
 ```html
@@ -111,7 +128,7 @@ QOQORO.base                    // where the package was loaded from
 QOQORO.EMPTY_DOCUMENT          // an empty QNote document
 QOQORO.mount(target, options)  // → handle
 
-handle.mode                    // 'editor' | 'workspace'
+handle.mode                    // 'editor' | 'workspace' | 'sheet'
 handle.iframe                  // the editor's frame, for sizing or focus
 handle.ready                   // Promise<handle>
 handle.destroy()
@@ -119,6 +136,10 @@ handle.destroy()
 // editor mode
 handle.load(xmlOrUrl)          // Promise
 handle.save()                  // Promise<string>  QNote XML
+
+// sheet mode
+handle.open(path)              // open a vault spreadsheet
+handle.save()                  // save it back to the vault
 
 // with qoqoro-luau.js
 QOQORO.luau.run(source, { apply?: boolean, path?: string })
