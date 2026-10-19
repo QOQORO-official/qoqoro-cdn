@@ -108,3 +108,13 @@ html, body.qs-body { height: 100%; margin: 0; overflow: hidden; background: #fff
 .qs-chart-settings input:not([type]) { height: 24px; border: 1px solid #d4dbe6; border-radius: 4px; padding: 0 6px; font: inherit; }
 .qs-chart-settings .buttons { display: flex; gap: 6px; justify-content: flex-end; }
 .qs-chart-settings button, .qs-chart-bar button { font: inherit; }
+
+/* Luckysheet's .luckysheet-bottom-controll-row: under the last row */
+.qs-add-rows { position: absolute; left: 56px; z-index: 2; display: none; align-items: center; gap: 6px; height: 30px; font-size: 14px; }
+.qs-add-rows button { height: 28px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+.qs-add-rows-btn { padding: 0 20px; }
+.qs-add-rows-top { padding: 0 8px; margin-left: 10px; }
+.qs-add-rows button:hover { background: #e6e6e6; }
+.qs-add-rows-input { width: 40px; height: 26px; border: 1px solid #a1a1a1; padding: 0 4px; font: inherit; font-size: 13px; }
+.qs-add-rows-input:focus { border-color: #0188fb; outline: 0; }
+.qs-add-rows-hint { color: #9c9c9c; }

@@ -69,6 +69,7 @@ type
     rowHeights*: Table[int, float64]
     maxRow*, maxCol*: int          ## used range (exclusive); grows, recomputed on demand
     merges*: seq[Merge]            ## merged ranges; the top-left cell holds the content
+    rowsTotal*, colsTotal*: int    ## the sheet's size beyond its data ("Add rows"); see rowCount
 
   Merge* = object
     r1*, c1*, r2*, c2*: int        ## inclusive, 0-based
@@ -85,6 +86,8 @@ const
   MaxCols* = 16_384
   DefaultColWidth* = 80.0
   DefaultRowHeight* = 21.0
+  DefaultRowCount* = 84            ## Luckysheet's defaultrowNum / defaultcolumnNum
+  DefaultColCount* = 60
 
 proc hash*(s: Style): Hash =
   var h: Hash = 0
@@ -143,6 +146,12 @@ proc sheetNamed*(wb: Workbook, name: string): Sheet =
           same = false; break
       if same: return s
   nil
+
+proc rowCount*(s: Sheet): int =
+  ## Rows the sheet shows: 84, more when its data or "Add rows" needs them.
+  max(max(s.rowsTotal, DefaultRowCount), s.maxRow)
+
+proc colCount*(s: Sheet): int = max(max(s.colsTotal, DefaultColCount), s.maxCol)
 
 proc cellAt*(s: Sheet, r, c: int): Cell =
   s.cells.getOrDefault(key(r, c))

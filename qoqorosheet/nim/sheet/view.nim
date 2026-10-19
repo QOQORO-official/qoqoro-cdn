@@ -49,6 +49,7 @@ type
     resizeStart, resizeOrig: float64
     touchX, touchY, touchScrollX, touchScrollY: float64
     touchMoved: bool
+    addRowBar*, addRowInput: Node
     undo, redo: seq[Action]
     framePending: bool
     fileName*: string
@@ -123,14 +124,14 @@ proc visibleCols(v: SheetView): (int, int) =
   let s = v.sheet
   let first = s.colAt(v.scrollX)
   var last = first
-  while last < MaxCols - 1 and s.colX(last) - v.scrollX < v.width - RowHeaderW: inc last
+  while last < s.colCount - 1 and s.colX(last) - v.scrollX < v.width - RowHeaderW: inc last
   (first, last)
 
 proc visibleRows(v: SheetView): (int, int) =
   let s = v.sheet
   let first = s.rowAt(v.scrollY)
   var last = first
-  while last < MaxRows - 1 and s.rowY(last) - v.scrollY < v.height - ColHeaderH: inc last
+  while last < s.rowCount - 1 and s.rowY(last) - v.scrollY < v.height - ColHeaderH: inc last
   (first, last)
 
 proc cellBox*(v: SheetView, r, c: int): (float64, float64, float64, float64) =
@@ -190,12 +191,14 @@ proc draw*(v: SheetView) =
   c.strokeStyle = GridLine
   c.lineWidth = 1
   c.beginPath()
+  let gridBottom = min(h, ColHeaderH + s.rowY(r1 + 1) - v.scrollY)
+  let gridRight = min(w, RowHeaderW + s.colX(c1 + 1) - v.scrollX)
   for col in c0 .. c1 + 1:
     let x = floor(RowHeaderW + s.colX(col) - v.scrollX) + 0.5
-    c.moveTo(x, ColHeaderH); c.lineTo(x, h)
+    c.moveTo(x, ColHeaderH); c.lineTo(x, gridBottom)
   for r in r0 .. r1 + 1:
     let y = floor(ColHeaderH + s.rowY(r) - v.scrollY) + 0.5
-    c.moveTo(RowHeaderW, y); c.lineTo(w, y)
+    c.moveTo(RowHeaderW, y); c.lineTo(gridRight, y)
   c.stroke()
   # merged ranges: one box over the grid lines inside, in the top-left cell's fill
   var visMerges: seq[Merge]
@@ -395,10 +398,14 @@ proc draw*(v: SheetView) =
   replay(v.ctx, addr c.buf)
 
   # Scroll extent: the used range plus room to grow.
-  let needW = max(s.colX(max(s.maxCol, c1) + 30), v.scrollX + w * 2)
-  let needH = max(s.rowY(max(s.maxRow, r1) + 100), v.scrollY + h * 2)
+  let needW = s.colX(s.colCount) + 120
+  let needH = s.rowY(s.rowCount) + 80
   v.spacerX.style("width", $int(needW) & "px")
   v.spacerY.style("height", $int(needH + ColHeaderH) & "px")
+  # "Add [100] more rows at bottom" / "Back to the top", just under the last row
+  let barY = ColHeaderH + s.rowY(s.rowCount) - v.scrollY + 10
+  v.addRowBar.style("top", $int(barY) & "px")
+  v.addRowBar.style("display", if barY < h and barY > ColHeaderH - 40: "flex" else: "none")
   # The editor follows the active cell.
   if v.editing and not v.editFromFormulaBar:
     let (x, y, cw, ch) = v.activeBox()
@@ -504,8 +511,8 @@ proc scrollIntoView(v: SheetView, r, c: int) =
     v.sbY.setProp("scrollTop", s.rowY(s.rowAt(y + s.rowHeight(r) - vh + 2) + 1))
 
 proc moveTo*(v: SheetView, r, c: int, extend = false) =
-  let rr = clamp(r, 0, MaxRows - 1)
-  let cc = clamp(c, 0, MaxCols - 1)
+  let rr = clamp(r, 0, v.sheet.rowCount - 1)
+  let cc = clamp(c, 0, v.sheet.colCount - 1)
   if extend:
     v.cr = rr; v.cc = cc
   else:
@@ -523,16 +530,17 @@ proc jump(v: SheetView, r, c, dr, dc: int): (int, int) =
   let filled = s.hasCell(r, c)
   let nextFilled = s.hasCell(r + dr, c + dc)
   if filled and nextFilled:
-    while rr + dr >= 0 and cc + dc >= 0 and rr + dr < MaxRows and cc + dc < MaxCols and s.hasCell(rr + dr, cc + dc):
+    while rr + dr >= 0 and cc + dc >= 0 and rr + dr < s.rowCount and cc + dc < s.colCount and s.hasCell(rr + dr, cc + dc):
       rr += dr; cc += dc
   else:
     rr += dr; cc += dc
     while rr >= 0 and cc >= 0 and rr < max(s.maxRow, 1) + 1 and cc < max(s.maxCol, 1) + 1 and not s.hasCell(rr, cc):
       rr += dr; cc += dc
     if rr < 0 or cc < 0 or not s.hasCell(rr, cc):
-      rr = if dr > 0: max(s.maxRow - 1, r) elif dr < 0: 0 else: rr
-      cc = if dc > 0: max(s.maxCol - 1, c) elif dc < 0: 0 else: cc
-  (clamp(rr, 0, MaxRows - 1), clamp(cc, 0, MaxCols - 1))
+      # no filled cell that way: the sheet's edge
+      rr = if dr > 0: s.rowCount - 1 elif dr < 0: 0 else: r
+      cc = if dc > 0: s.colCount - 1 elif dc < 0: 0 else: c
+  (clamp(rr, 0, s.rowCount - 1), clamp(cc, 0, s.colCount - 1))
 
 proc clearSelection*(v: SheetView, formats = false) =
   let (r1, c1, r2, c2) = v.selRect()
@@ -752,7 +760,8 @@ proc fillDown*(v: SheetView, right = false) =
 
 proc hitCell(v: SheetView, gx, gy: float64): (int, int) =
   let s = v.sheet
-  (s.rowAt(max(0.0, gy - ColHeaderH + v.scrollY)), s.colAt(max(0.0, gx - RowHeaderW + v.scrollX)))
+  (min(s.rowAt(max(0.0, gy - ColHeaderH + v.scrollY)), s.rowCount - 1),
+   min(s.colAt(max(0.0, gx - RowHeaderW + v.scrollX)), s.colCount - 1))
 
 proc gridPoint(v: SheetView, e: Event): (float64, float64) =
   let r = v.grid.rect
@@ -785,7 +794,7 @@ proc onWheel(v: SheetView, e: Event) =
     let first = s.rowAt(v.scrollY + 0.01)
     let mag = abs(dy)
     let step = if mag < 40: 1 elif mag < 80: 2 else: 3
-    let target = if dy > 0: min(first + step, MaxRows - 1) else: max(first - step, 0)
+    let target = if dy > 0: min(first + step, s.rowCount - 1) else: max(first - step, 0)
     v.sbY.setProp("scrollTop", s.rowY(target))
   v.requestDraw()
 
@@ -807,7 +816,7 @@ proc onPointerDown(v: SheetView, e: Event) =
     else:
       let (_, c) = v.hitCell(gx, ColHeaderH + 1)
       if e.shiftKey: v.cc = c else: (v.ac = c; v.cc = c)
-      v.ar = 0; v.cr = MaxRows - 1
+      v.ar = 0; v.cr = v.sheet.rowCount - 1
       v.dragging = 4
   elif gx < RowHeaderW and gy > ColHeaderH:
     let edge = v.rowEdgeAt(gy)
@@ -816,10 +825,10 @@ proc onPointerDown(v: SheetView, e: Event) =
     else:
       let (r, _) = v.hitCell(RowHeaderW + 1, gy)
       if e.shiftKey: v.cr = r else: (v.ar = r; v.cr = r)
-      v.ac = 0; v.cc = MaxCols - 1
+      v.ac = 0; v.cc = v.sheet.colCount - 1
       v.dragging = 5
   elif gx < RowHeaderW and gy < ColHeaderH:
-    v.ar = 0; v.ac = 0; v.cr = MaxRows - 1; v.cc = MaxCols - 1
+    v.ar = 0; v.ac = 0; v.cr = v.sheet.rowCount - 1; v.cc = v.sheet.colCount - 1
   else:
     let (r, c) = v.hitCell(gx, gy)
     if e.shiftKey: v.cr = r; v.cc = c
@@ -889,7 +898,7 @@ proc onKeyDown(v: SheetView, e: Event) =
     of "u": e.preventDefault(); v.styleSelection(proc(st: var Style) = st.underline = not v.activeStyle.underline)
     of "d": e.preventDefault(); v.fillDown()
     of "r": e.preventDefault(); v.fillDown(right = true)
-    of "a": e.preventDefault(); v.ar = 0; v.ac = 0; v.cr = MaxRows - 1; v.cc = MaxCols - 1; v.requestDraw()
+    of "a": e.preventDefault(); v.ar = 0; v.ac = 0; v.cr = v.sheet.rowCount - 1; v.cc = v.sheet.colCount - 1; v.requestDraw()
     of "arrowdown", "arrowup", "arrowleft", "arrowright":
       e.preventDefault()
       let (dr, dc) = case k
@@ -1082,6 +1091,36 @@ proc newSheetView*(parent: Node, wb: Workbook): SheetView =
   v.sbX = v.grid.add el("div", "qs-sb qs-sb-x")
   v.spacerX = v.sbX.add el("div", "qs-sb-spacer")
   discard v.grid.add el("div", "qs-sb-corner")
+  # Luckysheet's bottom control: Add [100] more rows at bottom · Back to the top
+  v.addRowBar = v.grid.add el("div", "qs-add-rows")
+  let addBtn = v.addRowBar.add el("button", "qs-add-rows-btn")
+  addBtn.setAttribute("type", "button")
+  addBtn.setProp("textContent", "Add")
+  v.addRowInput = v.addRowBar.add el("input", "qs-add-rows-input")
+  v.addRowInput.setAttribute("type", "text")
+  v.addRowInput.setAttribute("placeholder", "100")
+  discard v.addRowBar.add(el("span", "qs-add-rows-hint")).add createTextNode("more rows at bottom")
+  let topBtn = v.addRowBar.add el("button", "qs-add-rows-top")
+  topBtn.setAttribute("type", "button")
+  topBtn.setProp("textContent", "Back to the top")
+  for n in [v.addRowBar]:
+    n.on("pointerdown", proc(e: Event) = e.stopPropagation())
+  addBtn.on("click", proc(e: Event) =
+    let text = v.addRowInput.value.strip
+    var n = 100
+    if text.len > 0:
+      try: n = parseInt(text)
+      except ValueError: n = -1
+    if n < 1 or n > 100:
+      discard window.invoke("alert", "The increase range is limited to 1-100")
+      return
+    let s = v.sheet
+    s.rowsTotal = s.rowCount + n
+    v.addRowInput.setProp("value", "")
+    v.requestDraw())
+  topBtn.on("click", proc(e: Event) =
+    v.sbY.setProp("scrollTop", 0)
+    v.requestDraw())
   v.editor = v.grid.add el("textarea", "qs-editor")
   v.editor.setAttribute("spellcheck", "false")
   v.editor.setAttribute("aria-label", "Cell editor")
