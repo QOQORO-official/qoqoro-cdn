@@ -1,0 +1,1 @@
+import"./utils/math.js";import{luckysheet as _0x22019f}from"./core.js";import _0x21367a from"./utils/polyfill.js";window["addEventListener"]&&navigator["userAgent"]["indexOf"]("Firefox")>0&&_0x21367a();export{_0x22019f as luckysheet};export default _0x22019f;

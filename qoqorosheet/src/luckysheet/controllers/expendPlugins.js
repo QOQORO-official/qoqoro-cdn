@@ -1,0 +1,1 @@
+import{print as _0x3edfbf}from"../expendPlugins/print/plugin.js";import{exportXlsx as _0x4f242c}from"../expendPlugins/exportXlsx/plugin.js";const p={print:_0x3edfbf,exportXlsx:_0x4f242c};function i(_0x1f1a55,_0x59e6d2){_0x1f1a55["length"]&&_0x1f1a55["forEach"](_0x5c7ae5=>{p[_0x5c7ae5["name"]](_0x59e6d2,_0x5c7ae5["config"],!0)})}export{i as initPlugins};

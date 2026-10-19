@@ -1,0 +1,1 @@
+import"./plugins/js/plugin.js";import"./src/luckysheet/utils/math.js";import{luckysheet as _0x487a25}from"./src/luckysheet/core.js";import _0x4d6a4d from"./src/luckysheet/utils/polyfill.js";window["addEventListener"]&&navigator["userAgent"]["includes"]("Firefox")&&_0x4d6a4d(),window["luckysheet"]=_0x487a25;export{_0x487a25 as luckysheet};export default _0x487a25;

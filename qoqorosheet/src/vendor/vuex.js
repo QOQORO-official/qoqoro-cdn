@@ -1,0 +1,1 @@
+export default globalThis["Vuex"];export const Store=globalThis["Vuex"]&&globalThis["Vuex"]["Store"];export const mapState=globalThis["Vuex"]&&globalThis["Vuex"]["mapState"];export const mapActions=globalThis["Vuex"]&&globalThis["Vuex"]["mapActions"];

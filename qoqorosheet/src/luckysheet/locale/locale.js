@@ -1,0 +1,1 @@
+import _0x3d3f5d from"./en.js";import _0x4990c7 from"./zh.js";import _0x5d4e25 from"./es.js";import _0x1dfeae from"./zh_tw.js";import _0x45ddd4 from"../store/index.js";export const locales={en:_0x3d3f5d,zh:_0x4990c7,es:_0x5d4e25,zh_tw:_0x1dfeae};function m(){return locales[_0x45ddd4["lang"]]}export default m;

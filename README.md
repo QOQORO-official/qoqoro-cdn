@@ -54,22 +54,27 @@ device.
 |---|---|---|
 | `editor` | The word processor on its own | No. Save downloads a `.qnote`; you can read the document from JavaScript |
 | `workspace` | The whole app: file tree, folders, login, editor, whiteboard, PDF viewer, diagrams, spreadsheets | Yes, a QNote Vault server |
-| `sheet` | Only the spreadsheet (QoqoroSheet, with Luau programs): no file list, no app switcher | Yes, a QNote Vault server |
+| `sheet` | Only the spreadsheet (QoqoroSheet, with charts and Luau programs) | No. Files open and download locally; with a server it opens and saves vault files |
 
 ### Editor
 
-```js
-const editor = QOQORO.mount('#notes', {
-  mode: 'editor',
-  document: 'https://example.com/report.qnote',  // QNote XML, or a URL to fetch it from (optional)
-  filename: 'report.qnote',                      // download name when the user saves
-  height: '600px',                               // defaults to 100% of the target
-});
+```html
+<script src="https://cdn.jsdelivr.net/gh/QOQORO-official/qoqoro-cdn@main/qoqoro.js"></script>
+<div id="notes" style="height:100vh"></div>
+<script type="module">  // type="module" allows top-level await
+  const editor = QOQORO.mount('#notes', {
+    mode: 'editor',
+    filename: 'report.qnote',  // download name when the user saves
+    // document: '<?xml …?><qnote …>…</qnote>' or a URL to fetch it from (optional)
+    // height: '600px',        // defaults to 100% of the target
+  });
 
-await editor.ready;
-await editor.load(xml);            // replace the document
-const xml = await editor.save();   // the current document as QNote XML
-editor.destroy();
+  await editor.ready;
+  const xml = await editor.save();  // the current document as QNote XML
+  console.log(xml);
+  await editor.load(xml);           // replace the document (XML or a URL)
+  // editor.destroy();              // removes the editor from the page
+</script>
 ```
 
 Store the XML wherever you like: your database, an API, `localStorage`. Users
@@ -87,36 +92,49 @@ small QNote Vault HTTP API: notes, folders, uploads, login.
 
 ### Spreadsheet only
 
-```js
-const sheet = QOQORO.mount('#sheet', {
-  mode: 'sheet',
-  server: 'https://notes.example.com',
-  path: 'data/gas.xlsx',          // a .xlsx, .xls or .csv in the vault
-});
-sheet.open('data/other.csv');     // open another file
-sheet.save();                     // write it back to the vault
+No server needed: QoqoroSheet comes with the package. Open and download
+`.xlsx`/`.csv` files from its toolbar, chart data and run Luau programs.
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/QOQORO-official/qoqoro-cdn@main/qoqoro.js"></script>
+<div id="sheet" style="height:100vh"></div>
+<script type="module">
+  const sheet = QOQORO.mount('#sheet', { mode: 'sheet' });
+  await sheet.ready;
+  // await sheet.load('https://example.com/data.xlsx');   // a URL (CORS), Blob, File or ArrayBuffer
+</script>
 ```
 
-The spreadsheet app itself is served by the server at `/qoqorosheet/`. It signs
-in like the workspace. The server must list your site's origin in
-`QNOTE_CORS_ORIGINS`.
+On a QNote Vault server, add `server` and a vault `path`: the file opens from
+the vault and `sheet.save()` writes it back. The server must list your site's
+origin in `QNOTE_CORS_ORIGINS`.
+
+```js
+const sheet = QOQORO.mount('#sheet', { mode: 'sheet', server: 'https://notes.example.com', path: 'data/gas.xlsx' });
+sheet.open('data/other.csv');
+sheet.save();
+```
 
 ## Automation with Luau
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/QOQORO-official/qoqoro-cdn@main/qoqoro.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/QOQORO-official/qoqoro-cdn@main/qoqoro-luau.js"></script>
-<script>
+<div id="notes" style="height:100vh"></div>
+<script type="module">
+  const editor = QOQORO.mount('#notes', { mode: 'editor' });
+  await editor.ready;                // programs run in the mounted editor
+
   const result = await QOQORO.luau.run(`
     local doc = ActiveDocument
     Selection:InsertHeading("Summary", wdStyleHeading2)
     for index, paragraph in doc.Paragraphs do
-      Selection:TypeText(\`{index}: {paragraph.Text}\n\`)
+      Selection:TypeText(\`{index}: {paragraph.Text}\\n\`)
     end
   `);
   // { ok: true, applied: true, status: 'Program ran · … command(s)', output: [...] }
 
-  await QOQORO.luau.run(source, { apply: false });   // dry run: report, change nothing
+  await QOQORO.luau.run('print(#ActiveDocument.Paragraphs)', { apply: false });   // dry run: report, change nothing
 </script>
 ```
 
@@ -138,8 +156,9 @@ handle.load(xmlOrUrl)          // Promise
 handle.save()                  // Promise<string>  QNote XML
 
 // sheet mode
-handle.open(path)              // open a vault spreadsheet
-handle.save()                  // save it back to the vault
+handle.load(urlOrBlob, name?)  // no server: open a spreadsheet (Promise)
+handle.open(path)              // with a server: open a vault spreadsheet
+handle.save()                  // with a server: save it back to the vault
 
 // with qoqoro-luau.js
 QOQORO.luau.run(source, { apply?: boolean, path?: string })

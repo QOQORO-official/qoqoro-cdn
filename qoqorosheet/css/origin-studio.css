@@ -1,0 +1,201 @@
+:root {
+  --origin-blue: #3979a4;
+  --origin-blue-dark: #245b7e;
+  --origin-border: #aeb4bc;
+  --origin-soft-border: #d8dce1;
+  --origin-panel: #f4f5f7;
+  --origin-ink: #202020;
+}
+
+.origin-studio-window {
+  position: fixed;
+  z-index: 100080;
+  top: 66px;
+  left: 50%;
+  width: min(1160px, calc(100vw - 36px));
+  height: min(720px, calc(100vh - 92px));
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: 1px solid #70757c;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--origin-ink);
+  box-shadow: 0 18px 55px rgba(20, 25, 31, .28);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+}
+
+.origin-studio-window * { box-sizing: border-box; }
+
+.origin-studio-titlebar {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 13px;
+  color: #fff;
+  background: linear-gradient(#4386b2, #306f99);
+  border-bottom: 1px solid #1f5578;
+  cursor: move;
+  user-select: none;
+}
+
+.origin-studio-mark {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.75);
+  border-radius: 2px;
+  color: #fff;
+  font: 700 14px/1 Georgia, serif;
+  background: rgba(255,255,255,.12);
+}
+
+.origin-studio-title { flex: 1; font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+.origin-studio-subtitle { color: rgba(255,255,255,.78); font-size: 11px; font-weight: 400; margin-left: 8px; }
+.origin-studio-close { width: 28px; height: 28px; border: 0; color: #fff; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; }
+.origin-studio-close:hover { background: rgba(0,0,0,.14); }
+
+.origin-studio-toolbar {
+  height: 44px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--origin-soft-border);
+  background: #f7f8f9;
+}
+
+.origin-studio-btn {
+  min-height: 29px;
+  padding: 5px 10px;
+  border: 1px solid #aeb5bc;
+  border-radius: 2px;
+  color: #222;
+  background: linear-gradient(#fff, #edf0f2);
+  font: 12px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.origin-studio-btn:hover { border-color: #6f8ca0; background: #f6fbff; }
+.origin-studio-btn.primary { color: #fff; border-color: #245d81; background: linear-gradient(#4a8db7, #33779f); font-weight: 700; }
+.origin-studio-btn.danger { color: #8b1d24; }
+.origin-studio-divider { width: 1px; height: 26px; margin: 0 3px; background: #ccd1d6; }
+
+/* The host must carry a definite height (window minus titlebar), otherwise the
+ * layout below it is auto-sized and nothing inside can ever scroll — the window
+ * just clips the overflow. */
+.origin-studio-host { height: calc(100% - 42px); display: flex; flex-direction: column; min-height: 0; }
+.origin-studio-layout { flex: 1 1 auto; display: grid; grid-template-columns: 310px 1fr; min-height: 0; }
+/* Column layout so the tab strip stays put and the active pane owns the
+ * scrollbar: the sidebar height is fixed by the layout grid, the pane takes the
+ * space left under the tabs and scrolls its own content when it does not fit. */
+.origin-studio-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: auto; border-right: 1px solid #c5c9ce; background: var(--origin-panel); }
+.origin-studio-main { min-width: 0; display: grid; grid-template-rows:auto 1fr auto; background:#fff; }
+
+.origin-studio-tabs { position: sticky; top: 0; z-index: 2; display: flex; flex: 0 0 auto; border-bottom: 1px solid #b7bcc2; background:#e7eaed; }
+.origin-studio-tab { flex: 1; height: 32px; border: 0; border-right: 1px solid #c3c7cc; background:#e7eaed; color:#333; font-size:11px; cursor:pointer; }
+.origin-studio-tab.active { color:#1d567b; background:#fff; box-shadow: inset 0 2px var(--origin-blue); font-weight:700; }
+.origin-studio-pane { display:none; padding:10px; }
+.origin-studio-pane.active { display:block; flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
+
+.origin-studio-group { margin-bottom:9px; border:1px solid #c5c9ce; background:#fff; }
+.origin-studio-group-title { padding:5px 7px; border-bottom:1px solid #d6d9dd; background:linear-gradient(#f9f9fa,#eceef0); color:#30353a; font-size:11px; font-weight:700; }
+.origin-studio-group-body { padding:7px; }
+.origin-studio-field { display:grid; grid-template-columns:minmax(0,1fr) 112px; align-items:center; gap:7px; min-height:30px; }
+.origin-studio-field.wide { grid-template-columns:1fr; gap:3px; }
+.origin-studio-field input[type="text"],
+.origin-studio-field input[type="number"],
+.origin-studio-field select,
+.origin-studio-textarea {
+  width:100%;
+  min-width:0;
+  height:25px;
+  border:1px solid #b9bec4;
+  border-radius:2px;
+  padding:3px 5px;
+  color:#171717;
+  background:#fff;
+  font:12px Arial,sans-serif;
+}
+.origin-studio-textarea { height:58px; resize:vertical; line-height:1.4; }
+.origin-studio-field input[type="color"] { width:34px; height:24px; justify-self:end; padding:1px; border:1px solid #b9bec4; background:#fff; }
+.origin-studio-check { display:flex; align-items:center; gap:6px; min-height:27px; }
+.origin-studio-hint { margin:5px 0; color:#68717a; font-size:10.5px; line-height:1.45; }
+
+.origin-legend-nudge { margin-top:6px; padding-top:6px; border-top:1px solid #dde1e5; }
+.origin-nudge-row { display:grid; grid-template-columns:52px minmax(0,1fr) 46px; align-items:center; gap:6px; min-height:26px; font-size:11px; color:#4c5968; }
+.origin-nudge-row input[type="range"] { width:100%; min-width:0; margin:0; accent-color:#33779f; }
+.origin-nudge-row output { color:#222; font:11px/1 Arial,sans-serif; text-align:right; }
+.origin-nudge-reset { width:100%; margin-top:5px; padding:3px; border:1px solid #c2c8ce; border-radius:2px; background:#f4f6f8; color:#33607f; font:11px Arial,sans-serif; cursor:pointer; }
+.origin-nudge-reset:hover { border-color:#6f8ca0; background:#eaf3fa; }
+
+.origin-csv-import-actions { display:flex; gap:6px; margin-top:7px; }
+.origin-csv-import-actions .origin-studio-btn { flex:1; }
+.origin-csv-import-actions .origin-studio-btn[disabled] { opacity:.55; cursor:progress; }
+
+.origin-sheet-list-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px; color:#4c5968; font-size:11px; font-weight:700; }
+.origin-sheet-list-head button { border:0; background:transparent; color:#176ca5; cursor:pointer; font:600 10px Arial,sans-serif; padding:2px 4px; }
+.origin-sheet-list { max-height:150px; overflow:auto; border:1px solid #c9d0d8; background:#fff; }
+.origin-sheet-row { display:flex; align-items:center; gap:6px; min-height:27px; padding:2px 7px; border-bottom:1px solid #edf0f3; color:#263444; font:12px Arial,sans-serif; }
+.origin-sheet-row:last-child { border-bottom:0; }
+.origin-sheet-row:hover { background:#edf6fc; }
+.origin-sheet-row > input[type="checkbox"] { flex:0 0 auto; margin:0; }
+.origin-sheet-row > span:last-child { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.origin-sheet-dot { flex:0 0 auto; width:9px; height:9px; border-radius:50%; background:var(--series-color,#3f7fa3); }
+
+/* The name is a button: it picks which series the editor below is aimed at,
+ * without touching the checkbox that decides whether the series is plotted. */
+.origin-sheet-pick { flex:1; min-width:0; display:flex; align-items:center; gap:7px; padding:3px 2px; border:0; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.origin-sheet-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.origin-sheet-pick:focus-visible { outline:2px solid var(--origin-blue); outline-offset:-2px; }
+.origin-sheet-row.editing { background:#dcedf9; box-shadow:inset 3px 0 var(--origin-blue); }
+.origin-sheet-row.editing .origin-sheet-name { color:#14496b; font-weight:700; }
+.origin-editing-sheet { color:#1d567b; }
+
+.origin-studio-statusbar { display:flex; align-items:center; min-height:31px; padding:5px 9px; border-top:1px solid #d5d9dd; background:#f3f4f5; color:#4d555d; }
+.origin-studio-statusbar.ok { color:#21683a; }
+.origin-studio-statusbar.warn { color:#8a5b00; }
+.origin-studio-statusbar.error { color:#9f2931; }
+
+.origin-studio-stage { min-height:0; overflow:auto; padding:13px; background:#dfe2e5; }
+.origin-studio-paper { min-height:100%; padding:16px; border:1px solid #b8bdc3; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.origin-studio-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+.origin-studio-card { min-width:0; padding:10px; border:1px solid #d2d6da; background:#fafafa; }
+.origin-studio-card-label { color:#6a7077; font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+.origin-studio-card-value { margin-top:4px; overflow:hidden; color:#222; font-size:16px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
+
+.origin-studio-preview { width:100%; min-height:360px; display:grid; place-items:center; border:1px solid #d5d8dc; background:#fff; overflow:hidden; }
+.origin-studio-preview svg { display:block; width:100%; height:auto; max-height:430px; }
+.origin-studio-placeholder { max-width:440px; padding:30px; color:#6c747c; text-align:center; line-height:1.6; }
+
+.origin-studio-table { width:100%; border-collapse:collapse; font-size:11px; }
+.origin-studio-table th,.origin-studio-table td { padding:5px 6px; border:1px solid #d0d4d8; text-align:right; }
+.origin-studio-table th:first-child,.origin-studio-table td:first-child { text-align:left; }
+.origin-studio-table th { background:#eef1f3; font-weight:700; }
+.origin-studio-badge { display:inline-block; padding:2px 6px; border-radius:10px; background:#e5edf4; color:#285c7e; font-size:10px; font-weight:700; }
+
+.origin-zone-row { display:grid; grid-template-columns:1fr 70px 70px 25px; gap:4px; margin-bottom:5px; }
+.origin-zone-row input { width:100%; height:24px; border:1px solid #b9bec4; padding:2px 4px; font:11px Arial,sans-serif; }
+.origin-zone-del { border:1px solid #c8a9ac; color:#8a2028; background:#fff; cursor:pointer; }
+.origin-zone-add { width:100%; margin-top:4px; }
+
+.origin-series-row { display:grid; grid-template-columns:20px 1fr 36px; gap:5px; align-items:center; margin-bottom:5px; }
+.origin-series-row input[type="text"] { height:24px; border:1px solid #b9bec4; padding:2px 4px; }
+.origin-series-row input[type="color"] { width:34px; height:24px; padding:1px; border:1px solid #b9bec4; }
+
+/* Sits beside the pane in the OPJU sidebar flex column — keep its natural
+ * height so the pane above it, not the note, is what scrolls. */
+.origin-opju-note { flex:0 0 auto; padding:12px; border-left:4px solid #3979a4; background:#eef6fb; line-height:1.55; }
+.origin-opju-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.origin-bridge-state { margin-top:10px; padding:8px; border:1px solid #d1d5d9; background:#fff; }
+
+@media (max-width: 760px) {
+  .origin-studio-window { top:12px; left:12px !important; width:calc(100vw - 24px); height:calc(100vh - 24px); transform:none !important; }
+  .origin-studio-layout { grid-template-columns:1fr; grid-template-rows:45% 55%; }
+  .origin-studio-sidebar { border-right:0; border-bottom:1px solid #c5c9ce; }
+  .origin-studio-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .origin-studio-subtitle { display:none; }
+}
