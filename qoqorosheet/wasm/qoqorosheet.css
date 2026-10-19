@@ -24,11 +24,47 @@ html, body.qs-body { height: 100%; margin: 0; overflow: hidden; background: #fff
 
 .qs-grid { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .qs-canvas { position: absolute; left: 0; top: 0; }
-.qs-scroll { position: absolute; inset: 0; overflow: auto; cursor: cell; touch-action: none; }
-.qs-spacer { width: 1px; height: 1px; }
+/* Cells: mouse and touch land on the hit layer; scrolling lives in the two
+   Luckysheet-style scrollbar strips (12 px) at the right and bottom. */
+.qs-hit { position: absolute; left: 0; top: 0; right: 12px; bottom: 12px; cursor: cell; touch-action: none; }
+.qs-sb-spacer { width: 1px; height: 1px; }
+.qs-sb-corner { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; background: #f8f8f8; }
+/* from Luckysheet's luckysheet.css (.luckysheet-scrollbar-ltr, -x, -y) */
+.qs-sb{scrollbar-base-color:#fff;scrollbar-track-color:#e7e7e7;scrollbar-darkshadow-color:#fff;scrollbar-3dlight-color:#fff;scrollbar-arrow-color:#757778;scrollbar-shadow-color:#bec1c4;scrollbar-highlight-color:#bec1c4;-ms-scroll-chaining:none;overflow:auto}
+.qs-sb{position:absolute;overflow:hidden;z-index:1003}
+.qs-sb::-webkit-scrollbar-button{height:0;width:0}
+.qs-sb::-webkit-scrollbar-button:start{display:none}
+.qs-sb::-webkit-scrollbar-button:end{display:block}
+.qs-sb::-webkit-scrollbar-button{border:1px solid #d9d9d9}
+.qs-sb::-webkit-scrollbar-button:horizontal{border-width:1px 0 0 0}
+.qs-sb::-webkit-scrollbar-button:vertical{border-width:0 0 0 1px}
+.qs-sb::-webkit-scrollbar-button:vertical{border-width:0 1px 0 0}
+.qs-sb::-webkit-scrollbar-button:horizontal:increment{background:no-repeat url(../css/waffle_sprite.png) -663px -13px;width:15px;padding-left:1px;background-clip:border-box;border:1px solid #d9d9d9;border-width:1px 0 0 0;box-shadow:none;background-color:#f8f8f8;border-bottom:1px solid #d9d9d9}
+.qs-sb::-webkit-scrollbar-button:horizontal:increment:hover{background:no-repeat url(../css/waffle_sprite.png) -395px -62px}
+.qs-sb::-webkit-scrollbar-button:horizontal:increment:active{background:no-repeat url(../css/waffle_sprite.png) -679px -13px}
+.qs-sb::-webkit-scrollbar-button:horizontal:decrement{border-left:1px solid #d9d9d9;border-right:1px solid #d9d9d9;background:no-repeat url(../css/waffle_sprite.png) -283px -62px;width:17px;border-bottom:1px solid #d9d9d9}
+.qs-sb::-webkit-scrollbar-button:horizontal:hover{background:no-repeat url(../css/waffle_sprite.png) -145px -70px}
+.qs-sb::-webkit-scrollbar-button:horizontal:active{background:no-repeat url(../css/waffle_sprite.png) -552px 0}
+.qs-sb::-webkit-scrollbar-button:vertical:increment{padding-top:1px;background:no-repeat url(../css/waffle_sprite.png) -531px -24px;border-left:1px solid #d9d9d9;height:15px}
+.qs-sb::-webkit-scrollbar-button:vertical:increment:hover{background:no-repeat url(../css/waffle_sprite.png) -570px -42px}
+.qs-sb::-webkit-scrollbar-button:vertical:increment:active{background:no-repeat url(../css/waffle_sprite.png) -83px -46px}
+.qs-sb::-webkit-scrollbar-button:vertical:decrement{border-top:1px solid #d9d9d9;border-bottom:1px solid #d9d9d9;border-left:1px solid #d9d9d9;background:no-repeat url(../css/waffle_sprite.png) -631px -27px;height:17px}
+.qs-sb::-webkit-scrollbar-button:vertical:decrement:hover{background:no-repeat url(../css/waffle_sprite.png) -180px -58px}
+.qs-sb::-webkit-scrollbar-button:vertical:decrement:active{background:no-repeat url(../css/waffle_sprite.png) -776px -28px}
+.qs-sb::-webkit-scrollbar-track{background-color:#fff;border:1px solid #d9d9d9}
+.qs-sb-x::-webkit-scrollbar-track{border-left:1px solid #d9d9d9;border-right:none}
+.qs-sb-y::-webkit-scrollbar-track{border-top:none;border-bottom:none}
+.qs-sb::-webkit-scrollbar{width:12px;height:12px;background-color:#fff}
+.qs-sb::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,.2);background-clip:padding-box;border:solid transparent;border-radius:12px;border-width:2px 1px 1px 2px;box-shadow:inset 1px 1px 0 rgba(0,0,0,.1),inset 0 -1px 0 rgba(0,0,0,.07)}
+.qs-sb::-webkit-scrollbar-thumb:hover{background-color:#969696;border:1px solid #a0a0a0;border-radius:12px}
+/* placement last, as in Luckysheet (the strips themselves scroll) */
+.qs-sb { position: absolute; z-index: 4; }
+.qs-sb-y { right: 0; top: 0; bottom: 12px; width: 12px; overflow-x: hidden; overflow-y: scroll; }
+.qs-sb-x { left: 44px; right: 12px; bottom: 0; height: 12px; overflow-x: scroll; overflow-y: hidden; }
 .qs-editor { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; resize: none;
   padding: 2px 3px; margin: 0; border: 2px solid #1a73e8; outline: none; box-sizing: border-box;
   background: #fff; overflow: hidden; white-space: pre; z-index: 3; }
+.qs-editor:not(.editing) { pointer-events: none; }   /* idle: keyboard focus only, never clicks */
 .qs-editor.editing { opacity: 1; width: auto; min-height: 21px; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
 
 .qs-tabs { display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 8px; border-top: 1px solid #e5e7eb;

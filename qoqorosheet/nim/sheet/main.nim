@@ -361,7 +361,9 @@ proc automation(path: string, op: int, argsJson: string): ApiReply =
         except ValueError: discard
       recalc(v.wb)
       v.rebuildTabs()
-      return reply(%(v.wb.sheets.len - 1))
+      # Luckysheet returns the new sheet
+      let order = v.wb.sheets.len - 1
+      return reply(%*{"name": name, "order": order, "index": "s" & $order, "status": "0"})
     of "setSheetActive":
       v.activate(arg(0).getInt)
       return reply(%true)

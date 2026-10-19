@@ -3,8 +3,11 @@
 ##
 ## The page is built with qweb (DOM handles, events) and drawn with the
 ## Canvas2D recorder (canvas.nim) that qweb replays in one call per frame.
-## Native scrolling: a transparent scroller with a large spacer sits over the
-## canvas; the canvas draws whatever the scroll offsets show.
+## Scrolling as in Luckysheet: two native scrollbar strips (12 px, the
+## horizontal one starting at the row header) hold the scroll offsets, the
+## canvas draws whatever they show, and the wheel over the cells moves whole
+## rows (1-3 per notch, landing on a row boundary) or 20 px sideways. Touch
+## drags scroll; a tap selects.
 
 import std/[tables, strutils, math, json, sequtils]
 import ../host, ../canvas, ../web/qweb
@@ -17,6 +20,7 @@ const
   HeaderFill = "#f8f9fa"
   HeaderLine = "#c0c0c0"
   SelBlue = "#1a73e8"
+  ScrollBar = 12.0          ## Luckysheet's cellMainSrollBarSize
   DefaultFont = "Arial"
   DefaultSize = 10.0
 
@@ -30,7 +34,7 @@ type
 
   SheetView* = ref object
     wb*: Workbook
-    root*, toolbar, fxName, fxInput, grid*, canvas, scroller*, spacer, editor*, tabs*: Node
+    root*, toolbar, fxName, fxInput, grid*, canvas, hit*, sbX*, sbY*, spacerX, spacerY, editor*, tabs*: Node
     programPanel*, programText*, programOut*, programTemplates*: Node
     ctx: Node
     rec: Ctx
@@ -43,6 +47,8 @@ type
     dragging: int            ## 0 none, 1 cells, 2 col resize, 3 row resize, 4 col headers, 5 row headers
     resizeIndex: int
     resizeStart, resizeOrig: float64
+    touchX, touchY, touchScrollX, touchScrollY: float64
+    touchMoved: bool
     undo, redo: seq[Action]
     framePending: bool
     fileName*: string
@@ -146,8 +152,8 @@ proc activeBox*(v: SheetView): (float64, float64, float64, float64) =
   v.rangeBox(m.r1, m.c1, m.r2, m.c2)
 
 proc draw*(v: SheetView) =
-  let w = v.scroller.getNum("clientWidth")
-  let h = v.scroller.getNum("clientHeight")
+  let w = max(0.0, v.grid.getNum("clientWidth") - ScrollBar)
+  let h = max(0.0, v.grid.getNum("clientHeight") - ScrollBar)
   let dpr = max(1.0, window.getNum("devicePixelRatio"))
   if w != v.width or h != v.height or dpr != v.dpr:
     v.width = w; v.height = h; v.dpr = dpr
@@ -155,8 +161,8 @@ proc draw*(v: SheetView) =
     v.canvas.setProp("height", int(round(h * dpr)))
     v.canvas.style("width", $w & "px")
     v.canvas.style("height", $h & "px")
-  v.scrollX = v.scroller.getNum("scrollLeft")
-  v.scrollY = v.scroller.getNum("scrollTop")
+  v.scrollX = v.sbX.getNum("scrollLeft")
+  v.scrollY = v.sbY.getNum("scrollTop")
   let s = v.sheet
   let c = v.rec
   c.reset()
@@ -391,8 +397,8 @@ proc draw*(v: SheetView) =
   # Scroll extent: the used range plus room to grow.
   let needW = max(s.colX(max(s.maxCol, c1) + 30), v.scrollX + w * 2)
   let needH = max(s.rowY(max(s.maxRow, r1) + 100), v.scrollY + h * 2)
-  v.spacer.style("width", $int(needW + RowHeaderW) & "px")
-  v.spacer.style("height", $int(needH + ColHeaderH) & "px")
+  v.spacerX.style("width", $int(needW) & "px")
+  v.spacerY.style("height", $int(needH + ColHeaderH) & "px")
   # The editor follows the active cell.
   if v.editing and not v.editFromFormulaBar:
     let (x, y, cw, ch) = v.activeBox()
@@ -471,6 +477,10 @@ proc endEdit*(v: SheetView, commit: bool) =
   v.editFromFormulaBar = false
   v.editor.removeClass("editing")
   v.editor.setProp("value", "")
+  # Park the (invisible) editor off the grid again: left over a cell it would
+  # take that cell's clicks.
+  v.editor.style("left", "-9999px"); v.editor.style("top", "0")
+  v.editor.style("min-width", "0"); v.editor.style("height", "1px")
   if commit:
     let old = v.sheet.cellAt(v.ar, v.ac)
     var act: Action
@@ -486,10 +496,12 @@ proc scrollIntoView(v: SheetView, r, c: int) =
   let y = s.rowY(r)
   let vw = v.width - RowHeaderW
   let vh = v.height - ColHeaderH
-  if x < v.scrollX: v.scroller.setProp("scrollLeft", x)
-  elif x + s.colWidth(c) > v.scrollX + vw: v.scroller.setProp("scrollLeft", x + s.colWidth(c) - vw + 2)
-  if y < v.scrollY: v.scroller.setProp("scrollTop", y)
-  elif y + s.rowHeight(r) > v.scrollY + vh: v.scroller.setProp("scrollTop", y + s.rowHeight(r) - vh + 2)
+  if x < v.scrollX: v.sbX.setProp("scrollLeft", x)
+  elif x + s.colWidth(c) > v.scrollX + vw: v.sbX.setProp("scrollLeft", x + s.colWidth(c) - vw + 2)
+  if y < v.scrollY: v.sbY.setProp("scrollTop", y)
+  elif y + s.rowHeight(r) > v.scrollY + vh:
+    # land on a row boundary, as the wheel does
+    v.sbY.setProp("scrollTop", s.rowY(s.rowAt(y + s.rowHeight(r) - vh + 2) + 1))
 
 proc moveTo*(v: SheetView, r, c: int, extend = false) =
   let rr = clamp(r, 0, MaxRows - 1)
@@ -761,7 +773,30 @@ proc rowEdgeAt(v: SheetView, gy: float64): int =
     if cand >= 0 and abs(ColHeaderH + s.rowY(cand + 1) - v.scrollY - gy) <= 3: return cand
   -1
 
+proc onWheel(v: SheetView, e: Event) =
+  ## Luckysheet's wheel: whole rows (1-3 by the notch size) or 20 px sideways.
+  e.preventDefault()
+  let s = v.sheet
+  let dy = e.deltaY
+  let dx = if e.deltaX != 0: e.deltaX elif e.shiftKey: dy else: 0.0
+  if dx != 0:
+    v.sbX.setProp("scrollLeft", max(0.0, v.scrollX + (if dx > 0: 20.0 else: -20.0)))
+  elif dy != 0:
+    let first = s.rowAt(v.scrollY + 0.01)
+    let mag = abs(dy)
+    let step = if mag < 40: 1 elif mag < 80: 2 else: 3
+    let target = if dy > 0: min(first + step, MaxRows - 1) else: max(first - step, 0)
+    v.sbY.setProp("scrollTop", s.rowY(target))
+  v.requestDraw()
+
 proc onPointerDown(v: SheetView, e: Event) =
+  if e.pointerType == "touch":
+    v.dragging = 6
+    v.touchX = e.clientX; v.touchY = e.clientY
+    v.touchScrollX = v.scrollX; v.touchScrollY = v.scrollY
+    v.touchMoved = false
+    v.hit.call("setPointerCapture", e.pointerId)
+    return
   if e.button != 0: return
   let (gx, gy) = v.gridPoint(e)
   if v.editing: v.endEdit(true)
@@ -790,7 +825,7 @@ proc onPointerDown(v: SheetView, e: Event) =
     if e.shiftKey: v.cr = r; v.cc = c
     else: v.ar = r; v.ac = c; v.cr = r; v.cc = c; v.snapAnchor()
     v.dragging = 1
-  v.scroller.call("setPointerCapture", e.pointerId)
+  v.hit.call("setPointerCapture", e.pointerId)
   e.preventDefault()
   v.editor.focus(true)
   v.refreshFormulaBar()
@@ -803,7 +838,7 @@ proc onPointerMove(v: SheetView, e: Event) =
     let cursor = if gy < ColHeaderH and gx > RowHeaderW and v.colEdgeAt(gx) >= 0: "col-resize"
                  elif gx < RowHeaderW and gy > ColHeaderH and v.rowEdgeAt(gy) >= 0: "row-resize"
                  else: "cell"
-    v.scroller.style("cursor", cursor)
+    v.hit.style("cursor", cursor)
   of 1:
     let (r, c) = v.hitCell(gx, gy)
     if r != v.cr or c != v.cc:
@@ -821,6 +856,14 @@ proc onPointerMove(v: SheetView, e: Event) =
   of 5:
     let (r, _) = v.hitCell(RowHeaderW + 1, gy)
     if r != v.cr: v.cr = r; v.refreshFormulaBar(); v.requestDraw()
+  of 6:
+    let dx = e.clientX - v.touchX
+    let dy = e.clientY - v.touchY
+    if abs(dx) + abs(dy) > 6: v.touchMoved = true
+    if v.touchMoved:
+      v.sbX.setProp("scrollLeft", max(0.0, v.touchScrollX - dx))
+      v.sbY.setProp("scrollTop", max(0.0, v.touchScrollY - dy))
+      v.requestDraw()
   else: discard
 
 proc onKeyDown(v: SheetView, e: Event) =
@@ -912,7 +955,7 @@ proc activate*(v: SheetView, index: int) =
   if v.editing: v.endEdit(true)
   v.wb.active = index
   v.ar = 0; v.ac = 0; v.cr = 0; v.cc = 0
-  v.scroller.setProp("scrollLeft", 0); v.scroller.setProp("scrollTop", 0)
+  v.sbX.setProp("scrollLeft", 0); v.sbY.setProp("scrollTop", 0)
   v.rebuildTabs()
   v.refreshFormulaBar()
   v.requestDraw()
@@ -1033,8 +1076,12 @@ proc newSheetView*(parent: Node, wb: Workbook): SheetView =
   v.fxInput.setAttribute("spellcheck", "false")
   v.grid = v.root.add el("div", "qs-grid")
   v.canvas = v.grid.add el("canvas", "qs-canvas")
-  v.scroller = v.grid.add el("div", "qs-scroll")
-  v.spacer = v.scroller.add el("div", "qs-spacer")
+  v.hit = v.grid.add el("div", "qs-hit")
+  v.sbY = v.grid.add el("div", "qs-sb qs-sb-y")
+  v.spacerY = v.sbY.add el("div", "qs-sb-spacer")
+  v.sbX = v.grid.add el("div", "qs-sb qs-sb-x")
+  v.spacerX = v.sbX.add el("div", "qs-sb-spacer")
+  discard v.grid.add el("div", "qs-sb-corner")
   v.editor = v.grid.add el("textarea", "qs-editor")
   v.editor.setAttribute("spellcheck", "false")
   v.editor.setAttribute("aria-label", "Cell editor")
@@ -1042,14 +1089,24 @@ proc newSheetView*(parent: Node, wb: Workbook): SheetView =
   v.ctx = v.canvas.context2d(alpha = false)
   v.buildToolbar()
 
-  v.scroller.on("scroll", proc(e: Event) = v.requestDraw(), passive = true)
-  v.scroller.on("pointerdown", proc(e: Event) = v.onPointerDown(e))
-  v.scroller.on("pointermove", proc(e: Event) = v.onPointerMove(e))
-  v.scroller.on("pointerup", proc(e: Event) =
+  v.sbX.on("scroll", proc(e: Event) = v.requestDraw(), passive = true)
+  v.sbY.on("scroll", proc(e: Event) = v.requestDraw(), passive = true)
+  v.hit.on("wheel", proc(e: Event) = v.onWheel(e))
+  v.hit.on("pointerdown", proc(e: Event) = v.onPointerDown(e))
+  v.hit.on("pointermove", proc(e: Event) = v.onPointerMove(e))
+  v.hit.on("pointerup", proc(e: Event) =
     if v.dragging in {2, 3}:
       if v.onChange != nil: v.onChange()
+    if v.dragging == 6 and not v.touchMoved:
+      # a tap: select the cell under it
+      let (gx, gy) = v.gridPoint(e)
+      if gx > RowHeaderW and gy > ColHeaderH:
+        if v.editing: v.endEdit(true)
+        let (r, c) = v.hitCell(gx, gy)
+        v.ar = r; v.ac = c; v.cr = r; v.cc = c; v.snapAnchor()
+        v.refreshFormulaBar(); v.requestDraw()
     v.dragging = 0)
-  v.scroller.on("dblclick", proc(e: Event) =
+  v.hit.on("dblclick", proc(e: Event) =
     let (gx, gy) = v.gridPoint(e)
     if gx > RowHeaderW and gy > ColHeaderH: v.beginEdit(keep = true))
   v.editor.on("keydown", proc(e: Event) = v.onKeyDown(e))
