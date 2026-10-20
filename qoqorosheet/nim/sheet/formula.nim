@@ -282,6 +282,104 @@ proc parseExpr(p: var Parser, minPrec = 0): Expr =
     let rhs = p.parseExpr(pr + 1)        # all binary operators are left-associative in Excel
     result = Expr(kind: ekBinary, bop: t.text, left: result, right: rhs)
 
+type RefSpan* = object
+  ## A reference in formula text: its byte span (sheet prefix included) and range.
+  start*, stop*: int
+  sheet*: string
+  r1*, c1*, r2*, c2*: int
+  shape*: int            ## 0 cell, 1 range, 2 whole columns, 3 whole rows
+
+proc formulaRefs*(src: string): seq[RefSpan] =
+  ## The references the engine reads in `src`, in order (for the editor's
+  ## colours and range boxes).
+  var toks: seq[Tok]
+  try: toks = tokenize(src)
+  except CatchableError: return
+  for t in toks:
+    if t.kind == tkRef:
+      result.add RefSpan(start: t.start, stop: t.stop, sheet: t.sheet, r1: t.r1, c1: t.c1, r2: t.r2, c2: t.c2, shape: t.refShape)
+
+proc adjustFormula*(src, formulaSheet, target: string, rows: bool, at, n: int, band = (-1, -1)): string =
+  ## Excel's reference update when sheet `target` gets n rows (`rows`) or
+  ## columns inserted before index `at` (n > 0), or -n of them deleted from `at`
+  ## on (n < 0): references after the change move, a range spanning an insert
+  ## grows, references into deleted cells become #REF! and ranges shrink.
+  ## `formulaSheet` is the sheet the formula is on (for unprefixed references).
+  ## `band`: only cells shift, within these columns (rows) — Delete cells,
+  ## shift up (left): references inside the band follow, the others stay.
+  var toks: seq[Tok]
+  try: toks = tokenize(src)
+  except CatchableError: return src
+  var pos = 0
+  for t in toks:
+    if t.kind != tkRef: continue
+    let sheetName = if t.sheet.len > 0: t.sheet else: formulaSheet
+    if cmpIgnoreCase(sheetName, target) != 0: continue
+    if (rows and t.refShape == 2) or (not rows and t.refShape == 3): continue     # A:A ignores rows, 1:1 columns
+    if band[0] >= 0:
+      let (o1, o2) = if rows: (t.c1, t.c2) else: (t.r1, t.r2)
+      if o1 < band[0] or o2 > band[1]: continue
+    var a = if rows: t.r1 else: t.c1
+    var b = if rows: t.r2 else: t.c2
+    var broken = false
+    if n > 0:
+      if a >= at: a += n
+      if b >= at: b += n
+    else:
+      let d1 = at
+      let d2 = at - n - 1
+      if a >= d1 and b <= d2: broken = true
+      else:
+        let na = if a < d1: a elif a > d2: a + n else: d1
+        let nb = if b < d1: b elif b > d2: b + n else: d1 - 1
+        a = na; b = nb
+    let limit = if rows: MaxRows - 1 else: MaxCols - 1
+    if not broken and (a > limit or b > limit): broken = true
+    var r1 = t.r1
+    var r2 = t.r2
+    var c1 = t.c1
+    var c2 = t.c2
+    if rows: (r1, r2) = (a, b) else: (c1, c2) = (a, b)
+    if not broken and r1 == t.r1 and r2 == t.r2 and c1 == t.c1 and c2 == t.c2: continue
+    result.add src[pos ..< t.start]
+    let span = src[t.start ..< t.stop]
+    let bang = span.rfind('!')
+    let prefix = if bang >= 0: span[0 .. bang] else: ""
+    if broken: result.add prefix & "#REF!"
+    else:
+      proc col(c: int, abs: bool): string = (if abs: "$" else: "") & colName(c)
+      proc row(r: int, abs: bool): string = (if abs: "$" else: "") & $(r + 1)
+      result.add prefix & (case t.refShape
+        of 0: col(c1, t.absC1) & row(r1, t.absR1)
+        of 1: col(c1, t.absC1) & row(r1, t.absR1) & ":" & col(c2, t.absC2) & row(r2, t.absR2)
+        of 2: col(c1, t.absC1) & ":" & col(c2, t.absC2)
+        else: row(r1, t.absR1) & ":" & row(r2, t.absR2))
+    pos = t.stop
+  result.add src[pos .. ^1]
+
+proc quoteSheet*(name: string): string =
+  ## A sheet name as a reference prefix: Sheet2 or 'My sheet'.
+  var plain = name.len > 0 and name[0] in IdentStartChars
+  for ch in name:
+    if ch notin IdentChars: plain = false
+  if plain: name else: "'" & name.replace("'", "''") & "'"
+
+proc renameSheetRefs*(src, oldName, newName: string): string =
+  ## Excel: references to sheet `oldName` follow its new name; with newName ""
+  ## (the sheet was deleted) they become #REF!.
+  var toks: seq[Tok]
+  try: toks = tokenize(src)
+  except CatchableError: return src
+  var pos = 0
+  for t in toks:
+    if t.kind != tkRef or t.sheet.len == 0 or cmpIgnoreCase(t.sheet, oldName) != 0: continue
+    let span = src[t.start ..< t.stop]
+    let bang = span.rfind('!')
+    result.add src[pos ..< t.start]
+    result.add (if newName.len == 0: "#REF!" else: quoteSheet(newName) & span[bang .. ^1])
+    pos = t.stop
+  result.add src[pos .. ^1]
+
 proc parseFormula*(src: string): Expr =
   ## Parses "=..." (or the text after '='); raises ParseError.
   var p = Parser(toks: tokenize(src))
@@ -1136,7 +1234,34 @@ proc formatNumber*(x: float64, fmt: string): string =
   var f = fmt.strip
   if f.len == 0 or cmpIgnoreCase(f, "General") == 0: return fmtGeneral(x)
   if f == "@": return fmtGeneral(x)
+  # sections: positive;negative (the negative one shows its own sign)
+  let sections = f.split(';')
   var v = x
+  if sections.len > 1 and x < 0 and sections[1].strip.len > 0:
+    f = sections[1].strip; v = -x
+  else: f = sections[0].strip
+  # literal text around the digits: ¥#,##0.00, "US$"0.00, 0.0" kg"
+  var lead, trail = ""
+  block literals:
+    var i = 0
+    while i < f.len and f[i] notin {'0', '#', '.', '?'}:
+      if f[i] == '"':
+        let j = f.find('"', i + 1)
+        if j < 0: break
+        lead.add f[i + 1 ..< j]; i = j + 1
+      elif f[i] == '\\' and i + 1 < f.len: lead.add f[i + 1]; i += 2
+      elif f[i] in {'_', '*'}: i += 2
+      else: lead.add f[i]; inc i
+    var k = f.len - 1
+    while k >= i and f[k] notin {'0', '#', '.', '?', '%'} and not (f[k] in {'+', '-'} and k > 0 and f[k - 1] in {'E', 'e'}):
+      dec k
+    var t = f[k + 1 .. ^1]
+    t = t.replace("\"", "").replace("\\", "")
+    trail = t
+    f = f[i .. k]
+  if lead.len > 0 or trail.len > 0:
+    let inner = formatNumber(v, f)
+    return (if v < 0 and inner.startsWith("-"): "-" & lead & inner[1 .. ^1] else: lead & inner) & trail
   var suffix = ""
   if f.endsWith("%"): v *= 100; suffix = "%"; f = f[0 ..< ^1]
   let sci = f.toUpperAscii.find("E+")
@@ -1203,3 +1328,13 @@ proc setFormula*(cell: var Cell, text: string) =
   cell.stamp = 0
   try: cell.ast = parseFormula(text)
   except CatchableError: cell.ast = nil
+
+proc evalFormulaAt*(wb: Workbook, s: Sheet, text: string, dr = 0, dc = 0): Value =
+  ## A formula that is not in a cell (a conditional format's or validation's),
+  ## its relative references moved by (dr, dc); a range gives its array.
+  let src = if text.startsWith("="): text else: "=" & text
+  try:
+    let e = parseFormula(if dr != 0 or dc != 0: shiftFormula(src, dr, dc) else: src)
+    if e == nil: return errVal("#NAME?")
+    eval(Ctx(wb: wb, sheet: s), e)
+  except CatchableError: errVal("#VALUE!")

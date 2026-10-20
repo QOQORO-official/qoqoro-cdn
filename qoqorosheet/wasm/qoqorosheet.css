@@ -1,4 +1,4 @@
-html, body.qs-body { height: 100%; margin: 0; overflow: hidden; background: #ffffff;
+body.qs-body { height: 100%; margin: 0; overflow: hidden; background: #ffffff;
   font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; color: #1f2937; }
 .qs-app { display: flex; flex-direction: column; height: 100%; }
 

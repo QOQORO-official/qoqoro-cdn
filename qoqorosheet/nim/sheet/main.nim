@@ -61,7 +61,7 @@ proc styleFromJson(base: Style, j: JsonNode): Style =
     result.hAlign = if n in 0..2: HAligns[n] else: haGeneral
   if j.hasKey("vt"):
     let n = if j["vt"].kind in {JInt, JFloat}: j["vt"].getInt else: -1
-    result.vAlign = if n in 0..2: VAligns[n] else: vaBottom
+    result.vAlign = if n in 0..2: VAligns[n] else: vaDefault
   for k in ["z", "numFmt"]:
     if j.hasKey(k): result.numFmt = (if j[k].kind == JString and j[k].getStr != "General": j[k].getStr else: "")
   # borders: {"bd": {"l": "thin", "r": ["thick", "#c00000"], "t": …, "b": …}}; null clears them
@@ -93,6 +93,7 @@ proc styleToJson(st: Style): JsonNode =
   case st.vAlign
   of vaMiddle: result["vt"] = %0
   of vaTop: result["vt"] = %1
+  of vaBottom: result["vt"] = %2
   else: discard
   if st.numFmt.len > 0: result["z"] = %st.numFmt
   var bd = newJObject()
@@ -138,6 +139,20 @@ proc cellFromJson(wb: Workbook, old: Cell, j: JsonNode): Cell =
   st = styleFromJson(st, j)
   if j.hasKey("s"): st = styleFromJson(st, j["s"])
   result.style = wb.styleId(st)
+  # Luckysheet's rich text: ct {t: "inlineStr", s: [{v, bl, it, un, cl, fc, ff, fs}, …]}
+  let ct = j{"ct"}
+  if ct != nil and ct.kind == JObject and ct{"t"}.getStr == "inlineStr" and ct{"s"} != nil and ct["s"].kind == JArray:
+    for part in ct["s"]:
+      var run = toRun(st, part{"v"}.getStr)
+      run.bold = part{"bl"}.getInt(ord(st.bold)) == 1
+      run.italic = part{"it"}.getInt(ord(st.italic)) == 1
+      run.underline = part{"un"}.getInt(ord(st.underline)) == 1
+      run.strike = part{"cl"}.getInt(ord(st.strike)) == 1
+      if part{"fc"}.getStr.len > 0: run.color = part["fc"].getStr
+      if part{"ff"}.getStr.len > 0: run.font = part["ff"].getStr
+      if part{"fs"}.kind in {JInt, JFloat}: run.fontSize = part["fs"].getFloat
+      result.rich.add run
+    if result.rich.len > 0: result.value = strVal(richText(result.rich))
 
 proc loadWorkbook(j: JsonNode) =
   let wb = newWorkbook()
@@ -155,6 +170,8 @@ proc loadWorkbook(j: JsonNode) =
       if item.len >= 2 and item[1].getFloat > 0: s.rowHeights[item[0].getInt] = item[1].getFloat
     for item in sj{"merges"}.getElems:
       if item.len >= 4: s.addMerge(Merge(r1: item[0].getInt, c1: item[1].getInt, r2: item[2].getInt, c2: item[3].getInt))
+    s.tabColor = sj{"color"}.getStr
+    s.hidden = sj{"hide"}.getInt(0) == 1
   if wb.sheets.len == 0: discard wb.addSheet("Sheet1")
   wb.active = clamp(j{"active"}.getInt(0), 0, wb.sheets.len - 1)
   recalc(wb)
@@ -174,6 +191,15 @@ proc workbookJson(): JsonNode =
       let m = displayText(v.wb, cell)
       if cell.value.kind == vkNum and m != fmtGeneral(cell.value.num): cj["m"] = %m
       if cell.style != 0: cj["s"] = styleToJson(v.wb.styles[cell.style])
+      if cell.rich.len > 0:
+        var parts = newJArray()
+        for run in cell.rich:
+          var pj = %*{"v": run.text, "bl": ord(run.bold), "it": ord(run.italic), "un": ord(run.underline), "cl": ord(run.strike)}
+          if run.color.len > 0: pj["fc"] = %run.color
+          if run.font.len > 0: pj["ff"] = %run.font
+          if run.fontSize > 0: pj["fs"] = %run.fontSize
+          parts.add pj
+        cj["ct"] = %*{"fa": "General", "t": "inlineStr", "s": parts}
       cells.add %*[rowOf(k), colOf(k), cj]
     var cols = newJArray()
     for c, w in s.colWidths: cols.add %*[c, w]
@@ -181,7 +207,7 @@ proc workbookJson(): JsonNode =
     for r, h in s.rowHeights: rows.add %*[r, h]
     var merges = newJArray()
     for m in s.merges: merges.add %*[m.r1, m.c1, m.r2, m.c2]
-    result["sheets"].add %*{"name": s.name, "cells": cells, "cols": cols, "rows": rows, "merges": merges}
+    result["sheets"].add %*{"name": s.name, "cells": cells, "cols": cols, "rows": rows, "merges": merges, "color": s.tabColor, "hide": ord(s.hidden)}
 
 proc luckySheets(): JsonNode =
   ## Luckysheet's getAllSheets() shape, as js/sheetLuau.js reads it.
@@ -243,7 +269,8 @@ proc openBytes(data, name, fromServer: string, request: int) =
   parseInBackground(name, data, proc(wb: Workbook) =
     install(wb, name)
     serverPath = fromServer
-    hostCall("opened", request, name),
+    hostCall("opened", request, name)
+    v.programAfterOpen(name),
     proc(msg: string) = hostCall("failed", "Open", msg, request))
 
 proc openUrl(url, name, fromServer: string, request: int) =
@@ -252,17 +279,22 @@ proc openUrl(url, name, fromServer: string, request: int) =
     if ok: openBytes(data, name, fromServer, request)
     else: hostCall("failed", "Open", if data.len > 0: data else: "could not read " & name, request))
 
+proc openFileNode(file: Node) =
+  let name = file.getStr("name")
+  readBlob(file, brBytes, proc(ok: bool, data: string) =
+    if ok: openBytes(data, name, "", 0)
+    else: hostCall("failed", "Open", "could not read " & name, 0))
+
 proc openPicker() =
+  ## The top bar's #xlsxUpload input when present, else a temporary one.
+  let page = document.invoke("getElementById", "xlsxUpload").toNode
+  if not page.isNil: page.click(); return
   let input = el("input")
   input.setAttribute("type", "file")
   input.setAttribute("accept", ".xlsx,.csv,.tsv,.txt")
   input.on("change", proc(e: Event) =
     let file = input.getNode("files").invoke("item", 0).toNode
-    if file.isNil: return
-    let name = file.getStr("name")
-    readBlob(file, brBytes, proc(ok: bool, data: string) =
-      if ok: openBytes(data, name, "", 0)
-      else: hostCall("failed", "Open", "could not read " & name, 0)))
+    if not file.isNil: openFileNode(file))
   input.click()
 
 proc baseName(): string =
@@ -288,6 +320,43 @@ proc exportFile(kind: char, request: int) =
   writeInBackground(v.wb, kind, proc(data: string) =
     hostCall("exported", request, newBlob(data, mimeFor(if kind == 'c': ".csv" else: ".xlsx"))),
     proc(msg: string) = hostCall("failed", "Export", msg, request))
+
+proc exportOpju(format = "native") =
+  ## Every sheet as an Origin workbook (row 1: the column labels), built by
+  ## the server's OPJU codec (/api/opju/export, as opjuIO.js posts it). When a
+  ## real Origin project cannot hold the sheets, the portable container is
+  ## offered instead, never silently.
+  var books = newJArray()
+  for s in v.wb.sheets:
+    if s.name == "__sheetapp_charts__": continue
+    var cells = newJArray()
+    var maxR, maxC = -1
+    for k, cell in s.cells:
+      let val = case cell.value.kind
+        of vkNum: %cell.value.num
+        of vkStr: %cell.value.str
+        of vkBool: %cell.value.b
+        else: newJNull()
+      if val.kind == JNull: continue
+      cells.add %*{"r": rowOf(k), "c": colOf(k), "v": val}
+      maxR = max(maxR, rowOf(k)); maxC = max(maxC, colOf(k))
+    books.add %*{"name": s.name.substr(0, 30), "worksheetName": "Sheet1", "cells": cells, "rowCount": maxR + 1, "columnCount": maxC + 1}
+  if books.len == 0: hostCall("failed", "OPJU export", "There are no sheets to export.", 0); return
+  let file = baseName() & ".opju"
+  fetchPostJson("/api/opju/export", $ %*{"filename": file, "workbooks": books, "format": format}, proc(ok: bool, data: string) =
+    if ok:
+      downloadBytes(data, file, "application/octet-stream")
+      return
+    var msg = if data.len > 0: data else: "OPJU export failed"
+    var code = ""
+    try:
+      let j = parseJson(data)
+      msg = j{"error"}.getStr(msg); code = j{"code"}.getStr
+    except CatchableError: discard
+    if format == "native" and code in ["native-shape", "native-unavailable"] and
+       window.invoke("confirm", msg & "\n\nDownload SheetApp's portable container instead? It keeps every sheet and any text cells, but OriginPro cannot open it.").toBool:
+      exportOpju("portable")
+    else: hostCall("failed", "OPJU export", msg, 0))
 
 # --------------------------------------------------------------- automation --
 
@@ -323,6 +392,16 @@ proc automation(path: string, op: int, argsJson: string): ApiReply =
       return reply(%true)
     of "workbookJson": return reply(workbookJson())
     of "getAllSheets": return reply(luckySheets())
+    of "sheetState":
+      # a sheet's stage 7 state, for tests and programs
+      let s = v.wb.sheets[sheetIndex(arg(0))]
+      let st = v.wb.styles[s.cellAt(v.ar, v.ac).style]
+      var rows = newJArray()
+      for r in s.filterRows: rows.add %r
+      return reply(%*{"frozenRows": s.frozenRows, "frozenCols": s.frozenCols, "filter": s.filter.on, "filterRows": rows,
+        "rules": s.condRules.len, "validations": s.validations.len, "notes": s.notes.len, "links": s.links.len,
+        "pictures": s.pictures.len, "protected": s.protected, "pivot": s.pivot.source,
+        "active": {"wrap": st.wrap, "rotation": st.rotation, "locked": not st.unlocked}})
     of "setCellValue":
       let si = sheetIndex(arg(3))
       let r = arg(0).getInt
@@ -384,8 +463,9 @@ proc automation(path: string, op: int, argsJson: string): ApiReply =
     of "setSelection":
       v.ar = arg(0).getInt; v.ac = arg(1).getInt
       v.cr = arg(2).getInt(v.ar); v.cc = arg(3).getInt(v.ac)
+      v.extraRanges.setLen(0)
       v.snapAnchor()
-      v.refreshFormulaBar(); v.requestDraw()
+      v.refreshFormulaBar(); v.showSelection(); v.requestDraw()
       return reply(%true)
     of "openUrl":
       openUrl(arg(0).getStr, arg(1).getStr("sheet.xlsx"), arg(2).getStr, arg(3).getInt)
@@ -419,11 +499,19 @@ proc qw_main() {.wexport.} =
   apiHandler = automation
   let wb = newWorkbook()
   discard wb.addSheet("Sheet1")
-  v = newSheetView(body, wb)
+  v = newSheetView(wb)
   v.hostCall = proc(name: string, args: JsonNode) =
     case name
     of "open": openPicker()
     of "save": save("", 0)
+    of "saveServer":
+      var path = serverPath
+      if path.len == 0:
+        let (ok, name) = prompt("Save to server as", baseName() & ".xlsx")
+        if not ok or name.strip.len == 0: return
+        path = name.strip
+      save(path, 0)
+    of "opju": exportOpju()
     of "csv":
       writeInBackground(v.wb, 'c', proc(data: string) =
         downloadBytes(data, baseName() & ".csv", mimeFor(".csv")),
@@ -431,6 +519,7 @@ proc qw_main() {.wexport.} =
     else:
       let host = window.getNode("QoqoroSheetHost")
       if not host.isNil: host.call(name, jsJson($args))
+  v.onOpenFile = proc(file: Node) = openFileNode(file)
   v.onChange = proc() =
     let host = window.getNode("QoqoroSheetHost")
     if not host.isNil: host.call("changed")

@@ -6,8 +6,8 @@
 ## heights and the active sheet. Writing produces a complete package with the
 ## same styles, deflate-compressed.
 
-import std/[tables, strutils, math, algorithm]
-import model, formula, xmlscan
+import std/[tables, strutils, math, algorithm, base64]
+import model, formula, xmlscan, dropcell
 import ../nimdocx/[ziparchive, pngenc]
 
 type XlsxError* = object of ValueError
@@ -187,11 +187,16 @@ proc readStyles(xml: string): seq[Style] =
           of "center", "centerContinuous": cur.hAlign = haCenter
           of "right": cur.hAlign = haRight
           else: discard
-          case x.attr("vertical", "bottom")
+          case x.attr("vertical")
           of "top": cur.vAlign = vaTop
           of "center": cur.vAlign = vaMiddle
+          of "bottom": cur.vAlign = vaBottom
           else: discard
           cur.wrap = x.attr("wrapText") in ["1", "true"]
+          let rot = try: parseInt(x.attr("textRotation", "0")) except ValueError: 0
+          cur.rotation = if rot > 90 and rot <= 180: -(rot - 90) else: rot
+      of "protection":
+        if inXf: cur.unlocked = x.attr("locked", "1") in ["0", "false"]
       else: discard
     of xkEnd:
       case x.name
@@ -206,25 +211,53 @@ proc readStyles(xml: string): seq[Style] =
       else: discard
     else: discard
 
-proc readSharedStrings(xml: string): seq[string] =
+proc argbColor(v: string): string =
+  ## "FFFF0000" -> "#FF0000"
+  if v.len == 8: "#" & v[2 .. ^1] elif v.len == 6: "#" & v else: ""
+
+proc readSharedStrings(xml: string, rich: var seq[seq[RichRun]]): seq[string] =
+  ## The strings, and the runs of rich ones (<si><r><rPr>…</rPr><t>…</t></r>…).
   var x = initXml(xml)
   var cur = ""
-  var inSi, inT, inPh = false
+  var runs: seq[RichRun]
+  var run: RichRun
+  var inSi, inT, inPh, inR, inRPr = false
   while true:
     x.next()
     case x.kind
     of xkEof: break
     of xkStart:
       case x.name
-      of "si": inSi = true; cur = ""
+      of "si": inSi = true; cur = ""; runs.setLen(0)
+      of "r": inR = true; run = RichRun()
+      of "rPr": inRPr = not x.selfClosing
+      of "b", "i", "strike", "u":
+        if inRPr:
+          let on = x.attr("val", "1") notin ["0", "false", "none"]
+          case x.name
+          of "b": run.bold = on
+          of "i": run.italic = on
+          of "strike": run.strike = on
+          else: run.underline = on
+      of "sz": (if inRPr: run.fontSize = (try: parseFloat(x.attr("val")) except ValueError: 0.0))
+      of "color": (if inRPr: run.color = argbColor(x.attr("rgb")))
+      of "rFont": (if inRPr: run.font = x.attr("val"))
       of "t": inT = not x.selfClosing
       of "rPh": inPh = true
       else: discard
     of xkText:
-      if inSi and inT and not inPh: cur.add x.text
+      if inSi and inT and not inPh:
+        cur.add x.text
+        if inR: run.text.add x.text
     of xkEnd:
       case x.name
-      of "si": result.add cur; inSi = false
+      of "si":
+        result.add cur; inSi = false
+        rich.add (if runs.len > 1: runs else: @[])
+      of "r":
+        inR = false
+        if not inPh: runs.add run
+      of "rPr": inRPr = false
       of "t": inT = false
       of "rPh": inPh = false
       else: discard
@@ -250,7 +283,7 @@ proc resolvePath(base, target: string): string =
     elif p != "." and p.len > 0: parts.add p
   parts.join("/")
 
-proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleMap: seq[int32]) =
+proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], richStrings: seq[seq[RichRun]], styleMap: seq[int32]) =
   var x = initXml(xml)
   var shared = initTable[string, (int, int, string)]()   # si -> (row, col, formula)
   var r, c = 0
@@ -262,6 +295,9 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
   var fRef = ""
   var hasV, hasF = false
   var inIs = false
+  var isRuns: seq[RichRun]          # <is><r>…</r></is>: an inline rich string
+  var run: RichRun
+  var inR, inRPr = false
   var nextRow = 0
   var nextCol = 0
   while true:
@@ -274,17 +310,20 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
         let mn = (try: parseInt(x.attr("min")) except ValueError: 0) - 1
         let mx = (try: parseInt(x.attr("max")) except ValueError: 0) - 1
         let w = try: parseFloat(x.attr("width")) except ValueError: 0.0
-        if mn >= 0 and w > 0 and mx - mn < 2000:
-          let px = round(w * 7 + 5)
-          for i in mn .. min(mx, MaxCols - 1): s.colWidths[i] = if x.attr("hidden") in ["1", "true"]: 0.1 else: px
+        let hidden = x.attr("hidden") in ["1", "true"]
+        if mn >= 0 and mx - mn < 2000 and (w > 0 or hidden):
+          let px = round(w * 7 + 5) - 1            # Excel pixels -> columnlen (pitch - 1)
+          for i in mn .. min(mx, MaxCols - 1):
+            if w > 0: s.colWidths[i] = px
+            if hidden: s.hiddenCols.incl i
       of "row":
         let rr = (try: parseInt(x.attr("r", $(nextRow + 1))) except ValueError: nextRow + 1) - 1
         nextRow = rr + 1
         nextCol = 0
         if x.attr("customHeight") in ["1", "true"] or x.hasAttr("ht"):
           let ht = try: parseFloat(x.attr("ht")) except ValueError: 0.0
-          if ht > 0 and abs(ht * 4 / 3 - DefaultRowHeight) > 0.6: s.rowHeights[rr] = round(ht * 4 / 3)
-        if x.attr("hidden") in ["1", "true"]: s.rowHeights[rr] = 0.1
+          if ht > 0 and abs(ht * 4 / 3 - 1 - DefaultRowHeight) > 0.6: s.rowHeights[rr] = round(ht * 4 / 3) - 1
+        if x.attr("hidden") in ["1", "true"]: s.hiddenRows.incl rr
       of "c":
         if x.hasAttr("r"): (r, c) = parseRef(x.attr("r"))
         else: r = nextRow - 1; c = nextCol
@@ -292,6 +331,7 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
         t = x.attr("t", "n")
         styleIx = try: parseInt(x.attr("s", "0")) except ValueError: 0
         v = ""; f = ""; fShared = ""; fRef = ""; hasV = false; hasF = false
+        isRuns.setLen(0)
         if x.selfClosing:
           # a styled empty cell
           let st = if styleIx < styleMap.len: styleMap[styleIx] else: 0'i32
@@ -302,6 +342,20 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
         if kind == "shared": fShared = x.attr("si"); fRef = x.attr("ref")
         f = x.readText(); hasF = true
       of "is": inIs = true
+      of "r": (if inIs: inR = true; run = RichRun())
+      of "rPr": inRPr = inR and not x.selfClosing
+      of "b", "i", "strike", "u":
+        if inRPr:
+          let on = x.attr("val", "1") notin ["0", "false", "none"]
+          case x.name
+          of "b": run.bold = on
+          of "i": run.italic = on
+          of "strike": run.strike = on
+          else: run.underline = on
+      of "sz": (if inRPr: run.fontSize = (try: parseFloat(x.attr("val")) except ValueError: 0.0))
+      of "color": (if inRPr: run.color = argbColor(x.attr("rgb")))
+      of "rFont": (if inRPr: run.font = x.attr("val"))
+      of "tabColor": s.tabColor = argbColor(x.attr("rgb"))
       of "mergeCell":
         let parts = x.attr("ref").split(':')
         if parts.len == 2:
@@ -309,11 +363,16 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
           let (r2, c2) = parseRef(parts[1])
           if r1 >= 0 and c1 >= 0 and r2 >= r1 and c2 >= c1: s.addMerge(Merge(r1: r1, c1: c1, r2: r2, c2: c2))
       of "t":
-        if inIs: v.add x.readText(); hasV = true
+        if inIs:
+          let txt = x.readText()
+          v.add txt; hasV = true
+          if inR: run.text.add txt
       else: discard
     of xkEnd:
       case x.name
       of "is": inIs = false
+      of "r": (if inR: isRuns.add run; inR = false)
+      of "rPr": inRPr = false
       of "c":
         if r < 0 or c < 0 or r >= MaxRows or c >= MaxCols: continue
         var cell = Cell(style: if styleIx < styleMap.len: styleMap[styleIx] else: 0'i32)
@@ -327,7 +386,10 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
           of "s":
             let i = try: parseInt(v.strip) except ValueError: -1
             cell.value = if i >= 0 and i < strings.len: strVal(strings[i]) else: strVal("")
-          of "str", "inlineStr": cell.value = strVal(v)
+            if i >= 0 and i < richStrings.len: cell.rich = richStrings[i]
+          of "str", "inlineStr":
+            cell.value = strVal(v)
+            if t == "inlineStr" and isRuns.len > 1: cell.rich = isRuns
           of "b": cell.value = boolVal(v.strip == "1")
           of "e": cell.value = errVal(v.strip)
           else:
@@ -341,6 +403,14 @@ proc readSheet(wb: Workbook, s: Sheet, xml: string, strings: seq[string], styleM
         s.putCell(r, c, cell)
       else: discard
     else: discard
+
+proc hex8(color: string): string =
+  var c = color.strip(chars = {'#'})
+  if c.len == 3: c = $c[0] & c[0] & c[1] & c[1] & c[2] & c[2]
+  if c.len != 6: return "FF000000"
+  "FF" & c.toUpperAscii
+
+include xlsx7
 
 proc readXlsx*(data: string): Workbook =
   var z: ZipArchive
@@ -362,22 +432,32 @@ proc readXlsx*(data: string): Workbook =
       let typ = x.attr("Type")
       if typ.endsWith("/styles"): stylesPath = target
       elif typ.endsWith("/sharedStrings"): stringsPath = target
-  let strings = readSharedStrings(z.tryReadEntry(stringsPath))
+  var richStrings: seq[seq[RichRun]]
+  let strings = readSharedStrings(z.tryReadEntry(stringsPath), richStrings)
   var styleMap: seq[int32]
-  for st in readStyles(z.tryReadEntry(stylesPath)): styleMap.add wb.styleId(st)
+  let stylesXml = z.tryReadEntry(stylesPath)
+  for st in readStyles(stylesXml): styleMap.add wb.styleId(st)
+  let dxfs = readDxfs(stylesXml)
   # sheets in workbook order
   x = initXml(z.readEntry("xl/workbook.xml"))
   var active = 0
   var sheets: seq[(string, string)]
+  var hiddenNames: seq[string]
   while true:
     x.next()
     if x.kind == xkEof: break
     if x.kind == xkStart:
       if x.name == "workbookView": active = try: parseInt(x.attr("activeTab", "0")) except ValueError: 0
-      elif x.name == "sheet": sheets.add (x.attr("name"), rels.getOrDefault(x.attr("id"), ""))
+      elif x.name == "sheet":
+        sheets.add (x.attr("name"), rels.getOrDefault(x.attr("id"), ""))
+        hiddenNames.add (if x.attr("state") in ["hidden", "veryHidden"]: x.attr("name") else: "")
   for (name, path) in sheets:
     let s = wb.addSheet(if name.len > 0: name else: "Sheet" & $(wb.sheets.len + 1))
-    if path.len > 0 and z.hasEntry(path): readSheet(wb, s, z.readEntry(path), strings, styleMap)
+    if path.len > 0 and z.hasEntry(path):
+      let xml = z.readEntry(path)
+      readSheet(wb, s, xml, strings, richStrings, styleMap)
+      readSheetExtras(wb, s, z, path, xml, dxfs)
+    if wb.sheets.len - 1 < hiddenNames.len and hiddenNames[wb.sheets.len - 1].len > 0: s.hidden = true
   if wb.sheets.len == 0: discard wb.addSheet("Sheet1")
   wb.active = clamp(active, 0, wb.sheets.len - 1)
   wb
@@ -429,12 +509,6 @@ proc writeZipDeflated*(files: openArray[(string, string)]): string =
 proc numText(x: float64): string =
   ## Full precision, as Excel stores it.
   if x == trunc(x) and abs(x) < 1e15: $int64(x) else: $x
-
-proc hex8(color: string): string =
-  var c = color.strip(chars = {'#'})
-  if c.len == 3: c = $c[0] & c[0] & c[1] & c[1] & c[2] & c[2]
-  if c.len != 6: return "FF000000"
-  "FF" & c.toUpperAscii
 
 proc writeXlsx*(wb: Workbook): string =
   # styles: one xf per workbook style, same index
@@ -500,7 +574,8 @@ proc writeXlsx*(wb: Workbook): string =
     if fi != 0: xfs.add " applyFont=\"1\""
     if fl != 0: xfs.add " applyFill=\"1\""
     if bd != 0: xfs.add " applyBorder=\"1\""
-    if st.hAlign != haGeneral or st.vAlign != vaBottom or st.wrap:
+    if st.unlocked: xfs.add " applyProtection=\"1\""
+    if st.hAlign != haGeneral or st.vAlign != vaDefault or st.wrap or st.rotation != 0 or st.unlocked:
       xfs.add " applyAlignment=\"1\"><alignment"
       case st.hAlign
       of haLeft: xfs.add " horizontal=\"left\""
@@ -510,9 +585,13 @@ proc writeXlsx*(wb: Workbook): string =
       case st.vAlign
       of vaTop: xfs.add " vertical=\"top\""
       of vaMiddle: xfs.add " vertical=\"center\""
+      of vaBottom: xfs.add " vertical=\"bottom\""
       else: discard
       if st.wrap: xfs.add " wrapText=\"1\""
-      xfs.add "/></xf>"
+      if st.rotation != 0: xfs.add " textRotation=\"" & $(if st.rotation < 0: 90 - st.rotation else: st.rotation) & "\""
+      xfs.add "/>"
+      if st.unlocked: xfs.add "<protection locked=\"0\"/>"
+      xfs.add "</xf>"
     else: xfs.add "/>"
   var styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
   if customFmts.len > 0:
@@ -524,7 +603,17 @@ proc writeXlsx*(wb: Workbook): string =
   styles.add "<borders count=\"" & $borders.len & "\">" & borders.join("") & "</borders>"
   styles.add "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>"
   styles.add "<cellXfs count=\"" & $wb.styles.len & "\">" & xfs & "</cellXfs>"
-  styles.add "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>"
+  styles.add "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
+  # the formats conditional formatting applies
+  var dxfIx = initTable[string, int]()
+  var dxfList: seq[string]
+  for sh in wb.sheets:
+    for rule in sh.condRules:
+      if rule.kind in {ckDataBar, ckColorScale}: continue
+      let d = dxfXml(rule)
+      if not dxfIx.hasKey(d): dxfIx[d] = dxfList.len; dxfList.add d
+  if dxfList.len > 0: styles.add "<dxfs count=\"" & $dxfList.len & "\">" & dxfList.join("") & "</dxfs>"
+  styles.add "</styleSheet>"
 
   var strings: seq[string]
   var stringIx = initTable[string, int]()
@@ -543,18 +632,26 @@ proc writeXlsx*(wb: Workbook): string =
     keys.sort()
     var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
     let dim = if s.maxRow > 0 and s.maxCol > 0: "A1:" & cellName(s.maxRow - 1, s.maxCol - 1) else: "A1"
+    if s.tabColor.len == 7: xml.add "<sheetPr><tabColor rgb=\"FF" & s.tabColor[1 .. ^1].toUpperAscii & "\"/></sheetPr>"
     xml.add "<dimension ref=\"" & dim & "\"/>"
-    xml.add "<sheetViews><sheetView workbookViewId=\"0\"" & (if i == wb.active: " tabSelected=\"1\"" else: "") & "/></sheetViews>"
-    xml.add "<sheetFormatPr defaultRowHeight=\"" & $(DefaultRowHeight * 0.75) & "\"/>"
-    if s.colWidths.len > 0:
+    xml.add "<sheetViews><sheetView workbookViewId=\"0\"" & (if i == wb.active: " tabSelected=\"1\"" else: "")
+    if s.frozenRows > 0 or s.frozenCols > 0:
+      let pane = if s.frozenRows > 0 and s.frozenCols > 0: "bottomRight" elif s.frozenRows > 0: "bottomLeft" else: "topRight"
+      xml.add "><pane" & (if s.frozenCols > 0: " xSplit=\"" & $s.frozenCols & "\"" else: "") & (if s.frozenRows > 0: " ySplit=\"" & $s.frozenRows & "\"" else: "") &
+        " topLeftCell=\"" & cellName(s.frozenRows, s.frozenCols) & "\" activePane=\"" & pane & "\" state=\"frozen\"/><selection pane=\"" & pane & "\"/></sheetView></sheetViews>"
+    else: xml.add "/></sheetViews>"
+    xml.add "<sheetFormatPr defaultRowHeight=\"" & $((DefaultRowHeight + 1) * 0.75) & "\"/>"
+    if s.colWidths.len > 0 or s.hiddenCols.len > 0:
       var cols: seq[int]
       for c in s.colWidths.keys: cols.add c
+      for c in s.hiddenCols:
+        if c notin cols: cols.add c
       cols.sort()
       xml.add "<cols>"
       for c in cols:
-        let px = s.colWidths[c]
-        if px < 1: xml.add "<col min=\"" & $(c + 1) & "\" max=\"" & $(c + 1) & "\" width=\"0\" hidden=\"1\" customWidth=\"1\"/>"
-        else: xml.add "<col min=\"" & $(c + 1) & "\" max=\"" & $(c + 1) & "\" width=\"" & formatFloat(max(0.0, (px - 5) / 7), ffDecimal, 4) & "\" customWidth=\"1\"/>"
+        let px = s.colWidth(c)
+        xml.add "<col min=\"" & $(c + 1) & "\" max=\"" & $(c + 1) & "\" width=\"" & formatFloat(max(0.0, (px + 1 - 5) / 7), ffDecimal, 4) & "\"" &
+          (if c in s.hiddenCols: " hidden=\"1\"" else: "") & " customWidth=\"1\"/>"
       xml.add "</cols>"
     xml.add "<sheetData>"
     var row = -1
@@ -563,14 +660,17 @@ proc writeXlsx*(wb: Workbook): string =
       row = r
       xml.add "<row r=\"" & $(r + 1) & "\""
       if s.rowHeights.hasKey(r):
-        let px = s.rowHeights[r]
-        if px < 1: xml.add " hidden=\"1\""
-        else: xml.add " ht=\"" & formatFloat(px * 0.75, ffDecimal, 2) & "\" customHeight=\"1\""
+        xml.add " ht=\"" & formatFloat((s.rowHeights[r] + 1) * 0.75, ffDecimal, 2) & "\" customHeight=\"1\""
+      if r in s.hiddenRows or r in s.filterRows: xml.add " hidden=\"1\""
       xml.add ">"
     for r, _ in s.rowHeights:
       discard r
     var heightOnly: seq[int]
     for r in s.rowHeights.keys: heightOnly.add r
+    for r in s.hiddenRows:
+      if not s.rowHeights.hasKey(r): heightOnly.add r
+    for r in s.filterRows:
+      if not s.rowHeights.hasKey(r) and r notin s.hiddenRows: heightOnly.add r
     heightOnly.sort()
     var hi = 0
     for k in keys:
@@ -600,7 +700,23 @@ proc writeXlsx*(wb: Workbook): string =
       else:
         case val.kind
         of vkNum: xml.add "><v>" & numText(val.num) & "</v></c>"
-        of vkStr: xml.add " t=\"s\"><v>" & $sst(val.str) & "</v></c>"
+        of vkStr:
+          if cell.rich.len > 0:
+            # rich text: an inline string of runs, each with its full font (Excel reads a bare run as the default font)
+            xml.add " t=\"inlineStr\"><is>"
+            let base = wb.styles[cell.style]
+            for run in cell.rich:
+              let st = runStyle(base, run)
+              xml.add "<r><rPr>"
+              if st.bold: xml.add "<b/>"
+              if st.italic: xml.add "<i/>"
+              if st.strike: xml.add "<strike/>"
+              if st.underline: xml.add "<u/>"
+              xml.add "<sz val=\"" & $(if st.fontSize > 0: st.fontSize else: 11.0) & "\"/>"
+              if st.color.len == 7: xml.add "<color rgb=\"FF" & st.color[1 .. ^1].toUpperAscii & "\"/>"
+              xml.add "<rFont val=\"" & escapeXml(if st.font.len > 0: st.font else: "Calibri", true) & "\"/></rPr><t xml:space=\"preserve\">" & escapeXml(run.text) & "</t></r>"
+            xml.add "</is></c>"
+          else: xml.add " t=\"s\"><v>" & $sst(val.str) & "</v></c>"
         of vkBool: xml.add " t=\"b\"><v>" & (if val.b: "1" else: "0") & "</v></c>"
         of vkErr: xml.add " t=\"e\"><v>" & escapeXml(val.str) & "</v></c>"
         else: xml.add "/>"
@@ -609,13 +725,61 @@ proc writeXlsx*(wb: Workbook): string =
       inc hi
     if row >= 0: xml.add "</row>"
     xml.add "</sheetData>"
+    if s.protected:
+      xml.add "<sheetProtection sheet=\"1\" objects=\"1\" scenarios=\"1\"" & (if s.protectHash.len > 0: " password=\"" & s.protectHash & "\"" else: "") & "/>"
+    xml.add filterXml(wb, s)
     if s.merges.len > 0:
       xml.add "<mergeCells count=\"" & $s.merges.len & "\">"
       for m in s.merges: xml.add "<mergeCell ref=\"" & cellName(m.r1, m.c1) & ":" & cellName(m.r2, m.c2) & "\"/>"
       xml.add "</mergeCells>"
-    xml.add "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/></worksheet>"
+    xml.add condXml(s, dxfIx)
+    xml.add validationXml(s)
+    var rels = ""
+    var relNo = 0
+    proc rel(typ, target: string, external = false): string =
+      inc relNo
+      result = "rId" & $relNo
+      rels.add "<Relationship Id=\"" & result & "\" Type=\"" & NsRel & "/" & typ & "\" Target=\"" & escapeXml(target, true) & "\"" &
+        (if external: " TargetMode=\"External\"" else: "") & "/>"
+    if s.links.len > 0:
+      var lk: seq[int64]
+      for k in s.links.keys: lk.add k
+      lk.sort()
+      xml.add "<hyperlinks>"
+      for k in lk:
+        let target = s.links[k]
+        let at = cellName(rowOf(k), colOf(k))
+        if target.startsWith("#"): xml.add "<hyperlink ref=\"" & at & "\" location=\"" & escapeXml(target[1 .. ^1], true) & "\"/>"
+        else: xml.add "<hyperlink ref=\"" & at & "\" r:id=\"" & rel("hyperlink", target, external = true) & "\"/>"
+      xml.add "</hyperlinks>"
+    xml.add "<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>"
+    let n = i + 1
+    var media: seq[(string, string)]
+    for p in s.pictures:
+      let (bytes, ext) = pictureBytes(p.src)
+      if bytes.len > 0: media.add (bytes, ext)
+    if media.len == s.pictures.len and media.len > 0:
+      xml.add "<drawing r:id=\"" & rel("drawing", "../drawings/drawing" & $n & ".xml") & "\"/>"
+      files.add ("xl/drawings/drawing" & $n & ".xml", drawingXml(s, 0))
+      var drels = ""
+      for j, (bytes, ext) in media:
+        let name = "image" & $n & "_" & $(j + 1) & "." & ext
+        files.add ("xl/media/" & name, bytes)
+        drels.add "<Relationship Id=\"rIdImg" & $(j + 1) & "\" Type=\"" & NsRel & "/image\" Target=\"../media/" & name & "\"/>"
+      files.add ("xl/drawings/_rels/drawing" & $n & ".xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" & drels & "</Relationships>")
+      overrides.add "<Override PartName=\"/xl/drawings/drawing" & $n & ".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>"
+    if s.notes.len > 0:
+      discard rel("comments", "../comments" & $n & ".xml")
+      xml.add "<legacyDrawing r:id=\"" & rel("vmlDrawing", "../drawings/vmlDrawing" & $n & ".vml") & "\"/>"
+      files.add ("xl/comments" & $n & ".xml", commentsXml(s))
+      files.add ("xl/drawings/vmlDrawing" & $n & ".vml", notesVml(s, n))
+      overrides.add "<Override PartName=\"/xl/comments" & $n & ".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml\"/>"
+    xml.add "</worksheet>"
+    if rels.len > 0:
+      files.add ("xl/worksheets/_rels/sheet" & $n & ".xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" & rels & "</Relationships>")
     files.add ("xl/worksheets/sheet" & $(i + 1) & ".xml", xml)
-    sheetEntries.add "<sheet name=\"" & escapeXml(s.name.substr(0, 30), true) & "\" sheetId=\"" & $(i + 1) & "\" r:id=\"rId" & $(i + 1) & "\"/>"
+    sheetEntries.add "<sheet name=\"" & escapeXml(s.name.substr(0, 30), true) & "\" sheetId=\"" & $(i + 1) & "\"" &
+      (if s.hidden: " state=\"hidden\"" else: "") & " r:id=\"rId" & $(i + 1) & "\"/>"
     sheetRels.add "<Relationship Id=\"rId" & $(i + 1) & "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet" & $(i + 1) & ".xml\"/>"
     overrides.add "<Override PartName=\"/xl/worksheets/sheet" & $(i + 1) & ".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
   let n = wb.sheets.len
@@ -629,6 +793,9 @@ proc writeXlsx*(wb: Workbook): string =
     ("[Content_Types].xml", head & "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" &
       "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" &
       "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" &
+      "<Default Extension=\"vml\" ContentType=\"application/vnd.openxmlformats-officedocument.vmlDrawing\"/>" &
+      "<Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>" &
+      "<Default Extension=\"gif\" ContentType=\"image/gif\"/>" &
       "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>" &
       overrides &
       "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>" &

@@ -1,0 +1,6 @@
+# Served by Flask/Node/Nim but not part of the CDN package:
+# QoqoroSheet server code and the user's saved programs.
+qoqorosheet/*.py
+qoqorosheet/js/user_templates/
+__pycache__/
+*.pyc

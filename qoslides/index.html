@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' blob: 'wasm-unsafe-eval' 'sha256-ap8LwYCz9J63PHL3kduUlOJj7c+xh/Dft6aEdZOGE4I='; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' blob: https:; worker-src 'self' blob:; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Qoslides</title><link rel="stylesheet" href="style.css"><script defer src="nim-runtime/start.js"></script></head>
+<body>
+<header><a class="brand" href="./"><span class="brand-icon">Q</span>Qoslides</a><span class="divider"></span><span id="filename">Untitled presentation</span><span id="dirty" aria-label="Unsaved changes"></span><span class="spacer"></span><button id="present">▶ Present</button></header>
+<nav id="toolbar" aria-label="Presentation tools">
+<button id="new">New</button><button id="open">Open</button><button id="save">Save .qoslides</button><button id="export">Export PPTX</button><span class="divider"></span>
+<button id="undo" title="Undo (Ctrl+Z)">↶ Undo</button><button id="redo" title="Redo (Ctrl+Shift+Z)">↷ Redo</button><span class="divider"></span>
+<button id="add-slide">+ Slide</button><button id="add-text">Text</button><button id="add-shape">Shape</button><button id="add-image">Image</button><button id="add-table">Table</button>
+</nav>
+<main>
+<aside id="slides-panel" aria-label="Slides"><div class="panel-heading">SLIDES <span id="slide-count"></span></div><div id="slides"></div><div class="slide-actions"><button id="slide-up" title="Move slide up">↑</button><button id="slide-down" title="Move slide down">↓</button><button id="duplicate-slide">Duplicate</button><button id="delete-slide" title="Delete slide">×</button></div></aside>
+<section id="workspace" aria-label="Slide workspace"><div id="canvas-area"><div id="stage" role="region" aria-label="Current slide"></div></div><div id="notes-panel"><label for="notes">Speaker notes</label><textarea id="notes" placeholder="Add notes for this slide…"></textarea></div></section>
+<aside id="inspector" aria-label="Properties">
+<div class="panel-heading">SLIDE</div><label>Name<input id="slide-name"></label><label>Background<input id="slide-background" type="color" value="#ffffff"></label>
+<div class="pair"><label>Deck width<input id="deck-width" type="number" min="1" max="2000000"></label><label>Deck height<input id="deck-height" type="number" min="1" max="2000000"></label></div><button id="resize-deck">Apply size</button>
+<div class="panel-heading">OBJECTS</div><select id="objects" aria-label="Select object"><option value="">No selection</option></select>
+<div id="object-properties" hidden>
+<label>Name<input id="object-name"></label>
+<div class="pair"><label>X<input id="object-x" type="number" step="1"></label><label>Y<input id="object-y" type="number" step="1"></label></div>
+<div class="pair"><label>Width<input id="object-width" type="number" min="1"></label><label>Height<input id="object-height" type="number" min="1"></label></div>
+<label>Rotation<input id="object-rotation" type="number" step="1"></label>
+<div class="pair"><label>Fill<input id="object-fill" placeholder="#FFFFFF or none"></label><label>Line<input id="object-stroke" placeholder="#000000 or none"></label></div>
+<div class="pair"><label>Flip H<input id="object-flipH" type="checkbox"></label><label>Flip V<input id="object-flipV" type="checkbox"></label></div>
+<div id="text-properties"><label>Text<textarea id="object-text" rows="4"></textarea></label><small>Replacing text uses its first run’s style.</small>
+<div class="pair"><label>Font size<input id="object-fontSize" type="number" min="1" max="1000"></label><label>Text color<input id="object-color" placeholder="#000000"></label></div><label>Bold<input id="object-bold" type="checkbox"></label></div>
+<div id="table-properties" hidden></div>
+<div class="pair"><button id="send-back">Send back</button><button id="bring-front">Bring front</button></div><div class="pair"><button id="duplicate-object">Duplicate</button><button id="delete-object">Delete</button></div>
+</div>
+<details id="warnings-panel"><summary>Conversion &amp; preview notes <span id="warning-count"></span></summary><ul id="warnings"></ul></details>
+</aside>
+</main>
+<footer><span id="status" role="status">Starting Qoslides…</span><span class="spacer"></span><span id="position"></span><label>Zoom <input id="zoom" type="range" min="10" max="150" value="70"><span id="zoom-value">70%</span></label><button id="fit">Fit</button></footer>
+<div id="nim-console" role="alert"></div>
+<input id="file-input" type="file" accept=".pptx,.qoslides,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/json" hidden>
+<input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
+<dialog id="text-dialog"><form method="dialog"><h2>Edit text</h2><textarea id="text-editor" rows="10" aria-label="Object text"></textarea><p>Replacing text uses the first run’s style. Other objects keep their formatting.</p><div><button value="cancel">Cancel</button><button value="apply" class="primary">Apply</button></div></form></dialog>
+</body></html>
